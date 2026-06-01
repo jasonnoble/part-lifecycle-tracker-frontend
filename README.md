@@ -1,73 +1,63 @@
-# React + TypeScript + Vite
+# Part Lifecycle Tracker — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A static React + TypeScript SPA (Vite) for tracking parts, serialized part instances, assembly work orders, and customer/sales orders. It is built as static files and served by Cloudflare Pages; the browser calls the Rails API over HTTP.
 
-Currently, two official plugins are available:
+**Stack:** Vite · React 19 · React Router 7 · TanStack Query 5 · Tailwind CSS v4
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Prerequisites
 
-## React Compiler
+Toolchain is pinned in `mise.toml` (`node@26.2`, `npm@11.16.0`). With [mise](https://mise.jdx.dev) installed:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+mise install   # installs the pinned node + npm
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Environment
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Copy the example and fill in real values:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cp .env.example .env.local
 ```
+
+| Var | Dev | Prod (set in Cloudflare Pages) |
+|-----|-----|--------------------------------|
+| `VITE_API_BASE_URL` | `/api` (goes through the Vite proxy) | the API origin, e.g. `https://partledger.jasonnoble.dev` |
+| `VITE_API_KEY` | the local dev key | the real key |
+
+> ⚠️ **`VITE_*` vars are baked into the JS bundle and are publicly visible in DevTools.** The hardcoded `VITE_API_KEY` ships in the client and is therefore *not* a secret — this is an accepted trade-off for the no-real-auth demo, not an oversight. Don't put anything genuinely sensitive behind a `VITE_` prefix.
+
+`.env.local` is gitignored.
+
+## Development
+
+Local dev runs **two servers** — the Rails API and the Vite dev server:
+
+```bash
+# terminal 1 — backend repo
+bin/dev          # Rails API on :3000
+
+# terminal 2 — this repo
+npm run dev      # Vite on :5173  ← open this one
+```
+
+In dev, the app calls relative `/api/*` paths. `vite.config.ts` proxies those to `http://localhost:3000` and strips the `/api` prefix (`/api/parts` → `/parts`), so there's no CORS in local dev.
+
+## Scripts
+
+| Command | What it does |
+|---------|--------------|
+| `npm run dev` | Vite dev server with HMR |
+| `npm run build` | Type-check (`tsc -b`) then production build to `dist/` |
+| `npm run lint` | ESLint over the repo |
+| `npm run preview` | Serve the production build locally |
+
+## Deploy
+
+Cloudflare Pages, auto-deploying on push (per-PR previews):
+
+- **Build command:** `npm run build`  ·  **Output dir:** `dist/`
+- **Production env vars:** `VITE_API_BASE_URL` (the API origin), `VITE_API_KEY`
+- `public/_redirects` (`/* /index.html 200`) provides SPA history fallback so deep-link refreshes don't 404.
+- The backend must allow the Pages origin via `rack-cors`, including the custom request headers (`X-Actor-Role`, `X-Api-Key`).
