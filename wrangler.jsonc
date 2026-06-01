@@ -1,0 +1,12 @@
+{
+  // Name MUST match the existing Cloudflare Workers/Pages project name.
+  "name": "part-lifecycle-tracker-frontend",
+  "compatibility_date": "2026-06-01",
+  // Static-assets-only Worker: serve the Vite build output.
+  "assets": {
+    "directory": "./dist",
+    // Serve index.html for unknown routes so client-side routes / deep-link
+    // refreshes (e.g. /parts) don't 404.
+    "not_found_handling": "single-page-application"
+  }
+}
