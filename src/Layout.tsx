@@ -1,15 +1,16 @@
 import { NavLink, Outlet } from "react-router";
+import RoleSelector from "./RoleSelector.tsx";
 
 export default function Layout() {
     return (
         <>
-            <header>
+            <header className="text-3xl font-bold text-blue-600">
                 <nav>
                     <NavLink to="/">Assembly Line</NavLink>
                     <NavLink to="/parts">Parts</NavLink>
                     <NavLink to="/sales">Sales</NavLink>
                 </nav>
-                {/* role-selector dropdown goes here in Step 3 */}
+                <RoleSelector />
             </header>
             <main>
                 <Outlet />          {/* the matched child route renders here */}
