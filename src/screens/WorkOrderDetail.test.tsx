@@ -1,7 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import WorkOrder from "./WorkOrder";
+import WorkOrderDetail from "./WorkOrderDetail";
 import {
   jsonError,
   jsonOk,
@@ -59,12 +59,12 @@ function makeWorkOrder(steps: Step[]) {
   };
 }
 
-// Convenience: stub the OPEN work-orders list endpoint with the given orders
-// (wrapped in the pagy `{ data, meta }` envelope) plus an empty BOM by default.
-function workOrdersRoute(orders: ReturnType<typeof makeWorkOrder>[]) {
+// Convenience: stub the GET /work-orders/:id detail endpoint with the given
+// work order (returned bare, not in the pagy `{ data, meta }` envelope).
+function workOrderRoute(order: ReturnType<typeof makeWorkOrder>) {
   return {
-    match: (url: string) => /\/work-orders\?status=OPEN/.test(url),
-    respond: () => jsonOk({ data: orders, meta: {} }),
+    match: (url: string) => /\/work-orders\/wo-1$/.test(url),
+    respond: () => jsonOk(order),
   };
 }
 
@@ -76,7 +76,9 @@ function emptyBomRoute() {
 }
 
 function renderScreen() {
-  return renderWithProviders(<WorkOrder />);
+  return renderWithProviders(<WorkOrderDetail />, {
+    route: { path: "/work-orders/:id", initialEntry: "/work-orders/wo-1" },
+  });
 }
 
 beforeEach(() => {
@@ -86,10 +88,10 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-describe("WorkOrder", () => {
+describe("WorkOrderDetail", () => {
   it("shows a loading state then renders the work order header and steps", async () => {
     mockFetchByUrl([
-      workOrdersRoute([makeWorkOrder([makeStep()])]),
+      workOrderRoute(makeWorkOrder([makeStep()])),
       emptyBomRoute(),
     ]);
 
@@ -104,12 +106,16 @@ describe("WorkOrder", () => {
     expect(screen.getByText("PENDING")).toBeInTheDocument();
     // Acting-as banner reflects TECH_1 -> jamie.
     expect(screen.getByText("Acting as jamie@factory.com")).toBeInTheDocument();
+    // Back link to the Assembly Line list.
+    expect(
+      screen.getByRole("link", { name: "← Assembly Line" }),
+    ).toHaveAttribute("href", "/");
   });
 
   it("surfaces a query error", async () => {
     mockFetchByUrl([
       {
-        match: (url) => /\/work-orders/.test(url),
+        match: (url) => /\/work-orders\/wo-1$/.test(url),
         respond: () => jsonError(500, "Error", { error: "boom" }),
       },
     ]);
@@ -119,19 +125,9 @@ describe("WorkOrder", () => {
     expect(await screen.findByText(/Error:/)).toBeInTheDocument();
   });
 
-  it("shows 'no active work order' when the list is empty", async () => {
-    mockFetchByUrl([workOrdersRoute([])]);
-
-    renderScreen();
-
-    expect(
-      await screen.findByText("No active work order."),
-    ).toBeInTheDocument();
-  });
-
-  it("shows an empty state when the active work order has no steps", async () => {
+  it("shows an empty state when the work order has no steps", async () => {
     mockFetchByUrl([
-      workOrdersRoute([makeWorkOrder([])]),
+      workOrderRoute(makeWorkOrder([])),
       emptyBomRoute(),
     ]);
 
@@ -148,13 +144,13 @@ describe("WorkOrder", () => {
 
   it("enables Install for a PENDING step as TECH_1 and fires the action, then refetches", async () => {
     const user = userEvent.setup();
-    let workOrdersCallCount = 0;
+    let workOrderCallCount = 0;
     mockFetchByUrl([
       {
-        match: (url) => /\/work-orders\?status=OPEN/.test(url),
+        match: (url) => /\/work-orders\/wo-1$/.test(url),
         respond: () => {
-          workOrdersCallCount += 1;
-          return jsonOk({ data: [makeWorkOrder([makeStep()])], meta: {} });
+          workOrderCallCount += 1;
+          return jsonOk(makeWorkOrder([makeStep()]));
         },
       },
       emptyBomRoute(),
@@ -180,20 +176,20 @@ describe("WorkOrder", () => {
     await user.type(screen.getByPlaceholderText("Serial #"), "SN-XYZ");
     await user.click(installBtn);
 
-    await waitFor(() => expect(workOrdersCallCount).toBeGreaterThan(1));
+    await waitFor(() => expect(workOrderCallCount).toBeGreaterThan(1));
   });
 
   it("disables Validate for the actor who installed the step (4-eyes)", async () => {
     // TECH_1 == jamie installed this INSTALLED step → cannot validate.
     mockFetchByUrl([
-      workOrdersRoute([
+      workOrderRoute(
         makeWorkOrder([
           makeStep({
             status: "INSTALLED",
             installedActor: "jamie@factory.com",
           }),
         ]),
-      ]),
+      ),
       emptyBomRoute(),
     ]);
 
@@ -212,14 +208,14 @@ describe("WorkOrder", () => {
   it("enables Validate as TECH_2 when a different actor installed the step", async () => {
     setRole("TECH_2");
     mockFetchByUrl([
-      workOrdersRoute([
+      workOrderRoute(
         makeWorkOrder([
           makeStep({
             status: "INSTALLED",
             installedActor: "jamie@factory.com",
           }),
         ]),
-      ]),
+      ),
       emptyBomRoute(),
       {
         match: (url) => /\/steps\/step-1\/validate$/.test(url),
@@ -239,7 +235,7 @@ describe("WorkOrder", () => {
   it("disables Certify for non-QA roles and enables it for QA", async () => {
     // First render as TECH_1 (non-QA) → Certify disabled.
     mockFetchByUrl([
-      workOrdersRoute([makeWorkOrder([makeStep({ status: "VALIDATED" })])]),
+      workOrderRoute(makeWorkOrder([makeStep({ status: "VALIDATED" })])),
       emptyBomRoute(),
     ]);
 
@@ -257,7 +253,7 @@ describe("WorkOrder", () => {
     // Now as QA → Certify enabled.
     setRole("QA");
     mockFetchByUrl([
-      workOrdersRoute([makeWorkOrder([makeStep({ status: "VALIDATED" })])]),
+      workOrderRoute(makeWorkOrder([makeStep({ status: "VALIDATED" })])),
       emptyBomRoute(),
       {
         match: (url) => /\/steps\/step-1\/certify$/.test(url),
@@ -275,7 +271,7 @@ describe("WorkOrder", () => {
 
   it("keeps Complete disabled until all steps are CERTIFIED", async () => {
     mockFetchByUrl([
-      workOrdersRoute([
+      workOrderRoute(
         makeWorkOrder([
           makeStep({ id: "step-1", status: "CERTIFIED" }),
           makeStep({
@@ -285,7 +281,7 @@ describe("WorkOrder", () => {
             childPartName: "Gadget",
           }),
         ]),
-      ]),
+      ),
       emptyBomRoute(),
     ]);
 
@@ -303,14 +299,14 @@ describe("WorkOrder", () => {
   it("enables Complete when all steps are CERTIFIED and fires the complete action", async () => {
     const user = userEvent.setup();
     const fetchMock = mockFetchByUrl([
-      workOrdersRoute([makeWorkOrder([makeStep({ status: "CERTIFIED" })])]),
+      workOrderRoute(makeWorkOrder([makeStep({ status: "CERTIFIED" })])),
       emptyBomRoute(),
       {
         match: (url) => /\/complete$/.test(url),
         respond: () =>
           jsonOk({
             ...makeWorkOrder([makeStep({ status: "CERTIFIED" })]),
-            status: "COMPLETED",
+            status: "COMPLETE",
           }),
       },
     ]);
@@ -334,7 +330,7 @@ describe("WorkOrder", () => {
 
   it("does not block a PENDING step whose prerequisite is already CERTIFIED", async () => {
     mockFetchByUrl([
-      workOrdersRoute([
+      workOrderRoute(
         makeWorkOrder([
           makeStep({
             id: "prereq",
@@ -349,7 +345,7 @@ describe("WorkOrder", () => {
             childPartName: "Top Cover",
           }),
         ]),
-      ]),
+      ),
       {
         match: (url) => /\/parts\/ASSY-1\/bom$/.test(url),
         respond: () =>
@@ -387,7 +383,7 @@ describe("WorkOrder", () => {
   it("surfaces a complete-action error inline", async () => {
     const user = userEvent.setup();
     mockFetchByUrl([
-      workOrdersRoute([makeWorkOrder([makeStep({ status: "CERTIFIED" })])]),
+      workOrderRoute(makeWorkOrder([makeStep({ status: "CERTIFIED" })])),
       emptyBomRoute(),
       {
         match: (url) => /\/complete$/.test(url),
@@ -411,7 +407,7 @@ describe("WorkOrder", () => {
 
   it("shows a derived-BLOCKED pill and the blocking part inline", async () => {
     mockFetchByUrl([
-      workOrdersRoute([
+      workOrderRoute(
         makeWorkOrder([
           makeStep({
             id: "prereq",
@@ -426,7 +422,7 @@ describe("WorkOrder", () => {
             childPartName: "Top Cover",
           }),
         ]),
-      ]),
+      ),
       {
         match: (url) => /\/parts\/ASSY-1\/bom$/.test(url),
         respond: () =>
@@ -460,7 +456,7 @@ describe("WorkOrder", () => {
   it("surfaces a server error (409) with the error code when an action fails", async () => {
     const user = userEvent.setup();
     mockFetchByUrl([
-      workOrdersRoute([makeWorkOrder([makeStep()])]),
+      workOrderRoute(makeWorkOrder([makeStep()])),
       emptyBomRoute(),
       {
         match: (url) => /\/steps\/step-1\/install$/.test(url),
@@ -486,7 +482,7 @@ describe("WorkOrder", () => {
 
   it("renders actor provenance line once a step has actors", async () => {
     mockFetchByUrl([
-      workOrdersRoute([
+      workOrderRoute(
         makeWorkOrder([
           makeStep({
             status: "CERTIFIED",
@@ -495,7 +491,7 @@ describe("WorkOrder", () => {
             certifiedActor: "quinn@factory.com",
           }),
         ]),
-      ]),
+      ),
       emptyBomRoute(),
     ]);
 

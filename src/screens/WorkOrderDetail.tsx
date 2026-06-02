@@ -1,45 +1,15 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, apiList, ApiError } from "../apiClient";
+import { Link, useParams } from "react-router";
+import { api, ApiError } from "../apiClient";
 import { getRole, type RoleKey } from "../roles";
 import type { BomItem } from "../api/types";
-import { StatusBadge, type Tone } from "../components/Badge";
-
-// ---------------------------------------------------------------------------
-// Types (work-order / step shapes are screen-specific — kept local)
-// ---------------------------------------------------------------------------
-// Server step status enum. NOTE: per the API spec the authoritative enum is
-// PENDING | INSTALLED | VALIDATED | CERTIFIED and "BLOCKED" is a DERIVED UI
-// concept (see deriveBlocked below). The live backend currently also emits a
-// "BLOCKED" string for steps whose prerequisite isn't certified yet, so we
-// accept it defensively but never rely on it — we derive blocking ourselves.
-type ServerStepStatus = "PENDING" | "INSTALLED" | "VALIDATED" | "CERTIFIED";
-
-type WorkOrderStep = {
-  id: string;
-  bomItemId: string;
-  status: ServerStepStatus | "BLOCKED";
-  installedPartInstanceId: string | null;
-  installedActor: string | null;
-  validatedActor: string | null;
-  certifiedActor: string | null;
-  childPartNumber: string;
-  childPartName: string;
-  installedAt: string | null;
-  validatedAt: string | null;
-  certifiedAt: string | null;
-};
-
-type WorkOrder = {
-  id: string;
-  status: string;
-  customerOrderLineId: string | null;
-  partNumber: string;
-  serialNumber: string;
-  steps: WorkOrderStep[];
-  createdAt: string;
-  updatedAt: string;
-};
+import { StatusBadge } from "../components/Badge";
+import {
+  STEP_STATUS_TONES,
+  type WorkOrder,
+  type WorkOrderStep,
+} from "./workOrders";
 
 // BOM dependency graph (from GET /parts/{partNumber}/bom). Used to derive which
 // PENDING steps are blocked by an uncertified prerequisite. `BomItem` comes
@@ -137,32 +107,21 @@ function actionForStatus(status: WorkOrderStep["status"]): Action | null {
 }
 
 // ---------------------------------------------------------------------------
-// Status pill tones (shared Badge component)
-// ---------------------------------------------------------------------------
-const STATUS_TONES: Record<string, Tone> = {
-  PENDING: "neutral",
-  INSTALLED: "info",
-  VALIDATED: "warning",
-  CERTIFIED: "success",
-  BLOCKED: "danger",
-};
-
-// ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
-export default function WorkOrder() {
+export default function WorkOrderDetail() {
   const queryClient = useQueryClient();
+  const { id } = useParams<{ id: string }>();
   const currentRole = getRole();
   const actorEmail = actorEmailForRole(currentRole);
 
-  // No id in the route (this is the index / Assembly Line tab), so fetch the
-  // OPEN work orders and treat the first one as the active work order.
-  const { isPending, error, data } = useQuery({
-    queryKey: ["work-orders"],
-    queryFn: () => apiList<WorkOrder>("/work-orders?status=OPEN"),
+  // Fetch this specific work order by id. The detail endpoint returns the bare
+  // work-order object (not the pagy list envelope).
+  const { isPending, error, data: workOrder } = useQuery({
+    queryKey: ["work-order", id],
+    queryFn: () => api<WorkOrder>(`/work-orders/${id}`),
+    enabled: Boolean(id),
   });
-
-  const workOrder = data?.[0];
 
   // Fetch the parent part's BOM so we can derive blocked steps. Enabled only
   // once we know the work order's partNumber.
@@ -188,7 +147,11 @@ export default function WorkOrder() {
     });
   }
 
-  const workOrderId = workOrder?.id;
+  // Re-fetch this work order and refresh the Assembly Line list summaries.
+  function invalidateWorkOrder() {
+    queryClient.invalidateQueries({ queryKey: ["work-order", id] });
+    queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+  }
 
   const stepMutation = useMutation({
     mutationFn: ({
@@ -200,15 +163,15 @@ export default function WorkOrder() {
       action: Action;
       body: Record<string, unknown>;
     }) => {
-      if (!workOrderId) throw new Error("No active work order.");
+      if (!id) throw new Error("No active work order.");
       return api<WorkOrder>(
-        `/work-orders/${workOrderId}/steps/${stepId}/${action}`,
+        `/work-orders/${id}/steps/${stepId}/${action}`,
         { method: "POST", body: JSON.stringify(body) },
       );
     },
     onSuccess: (_data, vars) => {
       setStepError(vars.stepId, null);
-      queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+      invalidateWorkOrder();
     },
     onError: (err: unknown, vars) => {
       setStepError(vars.stepId, errorMessage(err));
@@ -217,15 +180,15 @@ export default function WorkOrder() {
 
   const completeMutation = useMutation({
     mutationFn: () => {
-      if (!workOrderId) throw new Error("No active work order.");
-      return api<WorkOrder>(`/work-orders/${workOrderId}/complete`, {
+      if (!id) throw new Error("No active work order.");
+      return api<WorkOrder>(`/work-orders/${id}/complete`, {
         method: "POST",
         body: JSON.stringify({}),
       });
     },
     onSuccess: () => {
       setStepError("complete", null);
-      queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+      invalidateWorkOrder();
     },
     onError: (err: unknown) => {
       setStepError("complete", errorMessage(err));
@@ -236,7 +199,7 @@ export default function WorkOrder() {
   if (error)
     return <p className="text-red-600">Error: {error.message}</p>;
   if (!workOrder)
-    return <p className="text-gray-600">No active work order.</p>;
+    return <p className="text-gray-600">Work order not found.</p>;
 
   const steps = workOrder.steps ?? [];
   const allCertified =
@@ -257,6 +220,13 @@ export default function WorkOrder() {
 
   return (
     <section className="mx-auto max-w-3xl">
+      <Link
+        to="/"
+        className="mb-4 inline-block text-sm text-blue-600 hover:underline"
+      >
+        ← Assembly Line
+      </Link>
+
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
@@ -413,7 +383,7 @@ function StepRow({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-3">
-          <StatusBadge value={displayStatus} tones={STATUS_TONES} />
+          <StatusBadge value={displayStatus} tones={STEP_STATUS_TONES} />
           {action === "install" && !isBlocked && (
             <input
               type="text"
