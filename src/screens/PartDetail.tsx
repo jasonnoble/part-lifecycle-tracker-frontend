@@ -1,34 +1,62 @@
 import { useState } from "react";
 import { useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../apiClient";
+import { ApiError, api } from "../apiClient";
 
-// --- Types (built against documented shapes; no live backend) -------------
+// --- Types (camelCase, matching the real backend) ------------------------
 
 type PartStatus = "DRAFT" | "RELEASED" | "OBSOLETE";
 
-type BomLine = {
-    component_part_number: string;
-    name: string;
-    quantity: number;
-    deleted_at?: string | null;
-};
-
+// GET /parts/:partNumber — header info only.
 type Part = {
     id: string;
-    part_number: string;
+    partNumber: string;
     name: string;
-    revision: string;
+    description: string | null;
+    revision: string | null;
     status: PartStatus;
-    bom: BomLine[];
-    // instance counts keyed by instance status, e.g. { "IN_STOCK": 3, "SHIPPED": 1 }
-    instance_counts: Record<string, number>;
+    createdAt: string;
+    updatedAt: string;
 };
 
-// --- Status model: DRAFT -> RELEASED -> OBSOLETE --------------------------
+// GET /parts/:partNumber/bom — { data: BomItem[] } (no meta).
+type BomDependency = {
+    prerequisiteBomItemId: string;
+    prerequisitePartNumber: string;
+};
+
+type BomItem = {
+    id: string;
+    quantity: number;
+    childPartNumber: string;
+    childPartName: string;
+    deletedAt: string | null;
+    dependencies: BomDependency[];
+};
+
+// GET /parts/:partNumber/context — rich payload; only the bits we read are typed.
+type PartContext = {
+    partNumber: string;
+    name: string;
+    revision: string | null;
+    status: PartStatus;
+    summary: string;
+    inventory: {
+        total: number;
+        byStatus: Record<string, number>;
+    };
+    openPurchaseOrders: number;
+    bom: unknown[];
+    recentEvents: unknown[];
+    generatedAt: string;
+    [key: string]: unknown;
+};
+
+// --- Status model: DRAFT -> RELEASED -> OBSOLETE -------------------------
+// Valid: DRAFT->RELEASED, DRAFT->OBSOLETE, RELEASED->OBSOLETE.
 
 const STATUS_FLOW: Record<PartStatus, PartStatus[]> = {
-    DRAFT: ["RELEASED"],
+    DRAFT: ["RELEASED", "OBSOLETE"],
     RELEASED: ["OBSOLETE"],
     OBSOLETE: [],
 };
@@ -44,7 +72,7 @@ function formatDate(value: string): string {
     return Number.isNaN(d.getTime()) ? value : d.toLocaleDateString();
 }
 
-// --- Raw /context modal ---------------------------------------------------
+// --- Raw /context modal --------------------------------------------------
 
 function ContextModal({
     partNumber,
@@ -55,8 +83,8 @@ function ContextModal({
 }) {
     const { isPending, error, data } = useQuery({
         queryKey: ["part", partNumber, "context"],
-        // GET /parts/:partNumber/context returns the raw /context response.
-        queryFn: () => api<unknown>(`/parts/${partNumber}/context`),
+        // GET /parts/:partNumber/context returns the full context payload.
+        queryFn: () => api<PartContext>(`/parts/${partNumber}/context`),
     });
 
     return (
@@ -96,49 +124,80 @@ function ContextModal({
     );
 }
 
-// --- Screen ---------------------------------------------------------------
+// --- Screen --------------------------------------------------------------
 
 export default function PartDetail() {
     const { partNumber } = useParams<{ partNumber: string }>();
     const queryClient = useQueryClient();
     const [showContext, setShowContext] = useState(false);
 
-    const { isPending, error, data } = useQuery({
+    const enabled = Boolean(partNumber);
+
+    // The detail view is assembled from three separate endpoints.
+    const partQuery = useQuery({
         queryKey: ["part", partNumber],
-        // GET /parts/:partNumber returns the part object directly (incl. bom + instance_counts).
         queryFn: () => api<Part>(`/parts/${partNumber}`),
-        enabled: Boolean(partNumber),
+        enabled,
+    });
+
+    const bomQuery = useQuery({
+        queryKey: ["part", partNumber, "bom"],
+        queryFn: () => api<{ data: BomItem[] }>(`/parts/${partNumber}/bom`),
+        enabled,
+    });
+
+    const contextQuery = useQuery({
+        queryKey: ["part", partNumber, "context"],
+        queryFn: () => api<PartContext>(`/parts/${partNumber}/context`),
+        enabled,
     });
 
     const transition = useMutation({
-        // POST /parts/:partNumber/transition with { to: "RELEASED" }
-        mutationFn: (to: PartStatus) =>
-            api<Part>(`/parts/${partNumber}/transition`, {
+        // POST /parts/:partNumber/status with { status }.
+        mutationFn: (status: PartStatus) =>
+            api<Part>(`/parts/${partNumber}/status`, {
                 method: "POST",
-                body: JSON.stringify({ to }),
+                body: JSON.stringify({ status }),
             }),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["part", partNumber] });
+            queryClient.invalidateQueries({
+                queryKey: ["part", partNumber, "context"],
+            });
         },
     });
 
-    if (isPending) return <p>Loading…</p>;
-    if (error) return <p className="text-red-600">Error: {error.message}</p>;
+    // Header drives the screen; gate on the part query.
+    if (partQuery.isPending) return <p>Loading…</p>;
+    if (partQuery.error)
+        return <p className="text-red-600">Error: {partQuery.error.message}</p>;
 
-    const part = data;
-    const instanceStatuses = Object.keys(part.instance_counts ?? {});
+    const part = partQuery.data;
+    const bomLines = bomQuery.data?.data ?? [];
+    const byStatus = contextQuery.data?.inventory?.byStatus ?? {};
+    const instanceStatuses = Object.keys(byStatus);
+
+    const transitionError =
+        transition.error instanceof ApiError
+            ? transition.error
+            : transition.error
+              ? new ApiError(transition.error.message, 0)
+              : null;
 
     return (
         <div className="space-y-6 p-4">
             {/* Header */}
             <section>
                 <h1 className="text-2xl font-bold">
-                    {part.part_number} — {part.name}
+                    {part.partNumber} — {part.name}
                 </h1>
                 <p className="text-gray-600">
-                    Revision {part.revision} ·{" "}
+                    Revision {part.revision ?? "—"} ·{" "}
                     <span className="font-medium">{part.status}</span>
                 </p>
+                {part.description && (
+                    <p className="mt-1 text-gray-600">{part.description}</p>
+                )}
             </section>
 
             {/* Status transition controls */}
@@ -164,18 +223,26 @@ export default function PartDetail() {
                             </button>
                         );
                     })}
-                    {transition.isError && (
+                    {transitionError && (
                         <span className="text-sm text-red-600">
-                            {transition.error.message}
+                            {transitionError.code === "INVALID_TRANSITION"
+                                ? `Invalid transition: ${transitionError.message}`
+                                : transitionError.message}
                         </span>
                     )}
                 </div>
             </section>
 
-            {/* Instance counts by status */}
+            {/* Instance counts by status (from /context inventory.byStatus) */}
             <section className="space-y-2">
                 <h2 className="text-lg font-semibold">Instances by status</h2>
-                {instanceStatuses.length === 0 ? (
+                {contextQuery.isPending ? (
+                    <p className="text-gray-500">Loading…</p>
+                ) : contextQuery.error ? (
+                    <p className="text-red-600">
+                        Error: {contextQuery.error.message}
+                    </p>
+                ) : instanceStatuses.length === 0 ? (
                     <p className="text-gray-500">No instances.</p>
                 ) : (
                     <ul className="flex flex-wrap gap-2">
@@ -185,7 +252,7 @@ export default function PartDetail() {
                                 className="rounded bg-gray-100 px-3 py-1 text-sm"
                             >
                                 <span className="font-medium">{status}</span>:{" "}
-                                {part.instance_counts[status]}
+                                {byStatus[status]}
                             </li>
                         ))}
                     </ul>
@@ -195,7 +262,11 @@ export default function PartDetail() {
             {/* BOM */}
             <section className="space-y-2">
                 <h2 className="text-lg font-semibold">Bill of Materials</h2>
-                {part.bom?.length === 0 ? (
+                {bomQuery.isPending ? (
+                    <p className="text-gray-500">Loading…</p>
+                ) : bomQuery.error ? (
+                    <p className="text-red-600">Error: {bomQuery.error.message}</p>
+                ) : bomLines.length === 0 ? (
                     <p className="text-gray-500">No BOM lines.</p>
                 ) : (
                     <table className="w-full border-collapse text-sm">
@@ -208,11 +279,11 @@ export default function PartDetail() {
                             </tr>
                         </thead>
                         <tbody>
-                            {part.bom?.map((line) => {
-                                const deleted = Boolean(line.deleted_at);
+                            {bomLines.map((line) => {
+                                const deleted = Boolean(line.deletedAt);
                                 return (
                                     <tr
-                                        key={line.component_part_number}
+                                        key={line.id}
                                         className={
                                             deleted
                                                 ? "text-gray-400 line-through"
@@ -220,13 +291,19 @@ export default function PartDetail() {
                                         }
                                     >
                                         <td className="py-1 pr-4">
-                                            {line.component_part_number}
+                                            {line.childPartNumber}
                                         </td>
-                                        <td className="py-1 pr-4">{line.name}</td>
-                                        <td className="py-1 pr-4">{line.quantity}</td>
+                                        <td className="py-1 pr-4">
+                                            {line.childPartName}
+                                        </td>
+                                        <td className="py-1 pr-4">
+                                            {line.quantity}
+                                        </td>
                                         <td className="py-1 pr-4 no-underline">
                                             {deleted
-                                                ? formatDate(line.deleted_at as string)
+                                                ? formatDate(
+                                                      line.deletedAt as string,
+                                                  )
                                                 : "—"}
                                         </td>
                                     </tr>
