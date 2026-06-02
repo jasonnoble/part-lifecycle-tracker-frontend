@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../apiClient";
+import { api, apiList, ApiError } from "../apiClient";
 import { getRole, type RoleKey } from "../roles";
+import type { BomItem } from "../api/types";
+import { StatusBadge, type Tone } from "../components/Badge";
 
 // ---------------------------------------------------------------------------
-// Types (real backend contract — camelCase, hyphenated routes)
+// Types (work-order / step shapes are screen-specific — kept local)
 // ---------------------------------------------------------------------------
 // Server step status enum. NOTE: per the API spec the authoritative enum is
 // PENDING | INSTALLED | VALIDATED | CERTIFIED and "BLOCKED" is a DERIVED UI
@@ -39,23 +41,9 @@ type WorkOrder = {
     updatedAt: string;
 };
 
-// List responses use the pagy-style envelope ({ data, meta }).
-type WorkOrderListResponse = { data: WorkOrder[]; meta?: unknown };
-
-// BOM item dependency graph (from GET /parts/{partNumber}/bom). Used to derive
-// which PENDING steps are blocked by an uncertified prerequisite.
-type BomDependency = {
-    prerequisiteBomItemId: string;
-    prerequisitePartNumber: string;
-};
-type BomItem = {
-    id: string;
-    quantity: number;
-    childPartNumber: string;
-    childPartName: string;
-    deletedAt: string | null;
-    dependencies: BomDependency[];
-};
+// BOM dependency graph (from GET /parts/{partNumber}/bom). Used to derive which
+// PENDING steps are blocked by an uncertified prerequisite. `BomItem` comes
+// from the shared API types.
 type BomResponse = { data: BomItem[] };
 
 // ---------------------------------------------------------------------------
@@ -80,6 +68,16 @@ const ROLE_ACTOR_EMAIL: Record<RoleKey, string> = {
 
 function actorEmailForRole(role: RoleKey): string {
     return ROLE_ACTOR_EMAIL[role];
+}
+
+// Format an unknown thrown value into a user-facing message, surfacing the
+// server-provided `[code]` prefix for ApiErrors.
+function errorMessage(err: unknown): string {
+    if (err instanceof ApiError) {
+        return `${err.code ? `[${err.code}] ` : ""}${err.message}`;
+    }
+    if (err instanceof Error) return err.message;
+    return "Request failed";
 }
 
 // ---------------------------------------------------------------------------
@@ -139,25 +137,15 @@ function actionForStatus(status: WorkOrderStep["status"]): Action | null {
 }
 
 // ---------------------------------------------------------------------------
-// Status pill styling
+// Status pill tones (shared Badge component)
 // ---------------------------------------------------------------------------
-const STATUS_STYLES: Record<string, string> = {
-    PENDING: "bg-gray-100 text-gray-700 ring-gray-300",
-    INSTALLED: "bg-blue-100 text-blue-800 ring-blue-300",
-    VALIDATED: "bg-amber-100 text-amber-800 ring-amber-300",
-    CERTIFIED: "bg-green-100 text-green-800 ring-green-300",
-    BLOCKED: "bg-red-100 text-red-800 ring-red-300",
+const STATUS_TONES: Record<string, Tone> = {
+    PENDING: "neutral",
+    INSTALLED: "info",
+    VALIDATED: "warning",
+    CERTIFIED: "success",
+    BLOCKED: "danger",
 };
-
-function StatusPill({ status }: { status: string }) {
-    return (
-        <span
-            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ring-1 ring-inset ${STATUS_STYLES[status] ?? STATUS_STYLES.PENDING}`}
-        >
-            {status}
-        </span>
-    );
-}
 
 // ---------------------------------------------------------------------------
 // Screen
@@ -171,17 +159,18 @@ export default function WorkOrder() {
     // OPEN work orders and treat the first one as the active work order.
     const { isPending, error, data } = useQuery({
         queryKey: ["work-orders"],
-        queryFn: () => api<WorkOrderListResponse>("/work-orders?status=OPEN"),
+        queryFn: () => apiList<WorkOrder>("/work-orders?status=OPEN"),
     });
 
-    const workOrder = data?.data?.[0];
+    const workOrder = data?.[0];
 
     // Fetch the parent part's BOM so we can derive blocked steps. Enabled only
     // once we know the work order's partNumber.
+    const partNumber = workOrder?.partNumber;
     const { data: bomData } = useQuery({
-        queryKey: ["bom", workOrder?.partNumber],
-        queryFn: () => api<BomResponse>(`/parts/${workOrder!.partNumber}/bom`),
-        enabled: !!workOrder?.partNumber,
+        queryKey: ["bom", partNumber],
+        queryFn: () => api<BomResponse>(`/parts/${partNumber}/bom`),
+        enabled: !!partNumber,
     });
     const bomItems = bomData?.data ?? [];
 
@@ -199,6 +188,8 @@ export default function WorkOrder() {
         });
     }
 
+    const workOrderId = workOrder?.id;
+
     const stepMutation = useMutation({
         mutationFn: ({
             stepId,
@@ -208,44 +199,36 @@ export default function WorkOrder() {
             stepId: string;
             action: Action;
             body: Record<string, unknown>;
-        }) =>
-            api<WorkOrder>(
-                `/work-orders/${workOrder!.id}/steps/${stepId}/${action}`,
+        }) => {
+            if (!workOrderId) throw new Error("No active work order.");
+            return api<WorkOrder>(
+                `/work-orders/${workOrderId}/steps/${stepId}/${action}`,
                 { method: "POST", body: JSON.stringify(body) },
-            ),
+            );
+        },
         onSuccess: (_data, vars) => {
             setStepError(vars.stepId, null);
             queryClient.invalidateQueries({ queryKey: ["work-orders"] });
         },
         onError: (err: unknown, vars) => {
-            const message =
-                err instanceof ApiError
-                    ? `${err.code ? `[${err.code}] ` : ""}${err.message}`
-                    : err instanceof Error
-                      ? err.message
-                      : "Request failed";
-            setStepError(vars.stepId, message);
+            setStepError(vars.stepId, errorMessage(err));
         },
     });
 
     const completeMutation = useMutation({
-        mutationFn: () =>
-            api<WorkOrder>(`/work-orders/${workOrder!.id}/complete`, {
+        mutationFn: () => {
+            if (!workOrderId) throw new Error("No active work order.");
+            return api<WorkOrder>(`/work-orders/${workOrderId}/complete`, {
                 method: "POST",
                 body: JSON.stringify({}),
-            }),
+            });
+        },
         onSuccess: () => {
             setStepError("complete", null);
             queryClient.invalidateQueries({ queryKey: ["work-orders"] });
         },
         onError: (err: unknown) => {
-            const message =
-                err instanceof ApiError
-                    ? `${err.code ? `[${err.code}] ` : ""}${err.message}`
-                    : err instanceof Error
-                      ? err.message
-                      : "Request failed";
-            setStepError("complete", message);
+            setStepError("complete", errorMessage(err));
         },
     });
 
@@ -418,7 +401,7 @@ function StepRow({
                 </div>
 
                 <div className="flex shrink-0 items-center gap-3">
-                    <StatusPill status={displayStatus} />
+                    <StatusBadge value={displayStatus} tones={STATUS_TONES} />
                     {action === "install" && !isBlocked && (
                         <input
                             type="text"
