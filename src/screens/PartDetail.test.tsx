@@ -419,3 +419,230 @@ describe("PartDetail", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// BOM editor (JAS-71) — add/remove BOM items, DRAFT-only
+// ---------------------------------------------------------------------------
+describe("PartDetail — BOM editor", () => {
+  const method = (init?: RequestInit) => init?.method ?? "GET";
+
+  // Parts offered in the child dropdown. THE-HOMER-001 (the part being edited)
+  // is present so we can assert it is filtered out.
+  const PARTS_LIST = {
+    data: [
+      PART,
+      {
+        id: "e1",
+        partNumber: "ENGINE-V8-001",
+        name: "V8 Engine",
+        description: "",
+        revision: "A",
+        status: "RELEASED" as const,
+        createdAt: "2024-01-01T00:00:00Z",
+        updatedAt: "2024-01-01T00:00:00Z",
+      },
+    ],
+    meta: {},
+  };
+
+  const CREATED_ITEM = {
+    id: "new1",
+    quantity: 2,
+    childPartNumber: "ENGINE-V8-001",
+    childPartName: "V8 Engine",
+    deletedAt: null,
+    dependencies: [],
+  };
+
+  type RouteOverrides = {
+    part?: Stub;
+    bom?: Stub;
+    onPost?: () => Stub;
+    onDelete?: () => Stub;
+    onBomGet?: () => Stub;
+  };
+
+  function installBomRouter(o: RouteOverrides = {}) {
+    return mockFetchByUrl([
+      {
+        match: (url, init) =>
+          method(init) === "POST" && /\/parts\/THE-HOMER-001\/bom$/.test(url),
+        respond: o.onPost ?? (() => jsonOk(CREATED_ITEM)),
+      },
+      {
+        match: (url, init) =>
+          method(init) === "DELETE" &&
+          /\/parts\/THE-HOMER-001\/bom\/[^/]+$/.test(url),
+        respond:
+          o.onDelete ??
+          (() => jsonOk({ ...BOM.data[0], deletedAt: "2026-01-01T00:00:00Z" })),
+      },
+      {
+        match: (url) => /\/parts\/THE-HOMER-001\/bom$/.test(url),
+        respond: o.onBomGet ?? (() => o.bom ?? jsonOk(BOM)),
+      },
+      {
+        match: (url) => /\/parts\/THE-HOMER-001\/context$/.test(url),
+        respond: () => jsonOk(CONTEXT),
+      },
+      // GET /parts (child dropdown) — must precede the single-part route.
+      { match: (url) => /\/parts$/.test(url), respond: () => jsonOk(PARTS_LIST) },
+      {
+        match: (url) => /\/parts\/THE-HOMER-001$/.test(url),
+        respond: () => o.part ?? jsonOk(PART),
+      },
+    ]);
+  }
+
+  it("shows BOM editing controls for a DRAFT part (add button + per-row remove)", async () => {
+    installBomRouter();
+    renderScreen();
+
+    expect(
+      await screen.findByRole("button", { name: "Add BOM item" }),
+    ).toBeInTheDocument();
+    // The active line is removable…
+    expect(
+      screen.getByRole("button", {
+        name: "Remove Whitewall Wheel from the BOM",
+      }),
+    ).toBeInTheDocument();
+    // …the soft-deleted line is not.
+    expect(
+      screen.queryByRole("button", {
+        name: /Remove Three Horns/,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides BOM editing for a non-DRAFT part and explains why", async () => {
+    installBomRouter({ part: jsonOk({ ...PART, status: "RELEASED" }) });
+    renderScreen();
+
+    await screen.findByRole("heading", { level: 1 });
+    expect(
+      screen.queryByRole("button", { name: "Add BOM item" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Remove/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/BOM is locked because this part is RELEASED/),
+    ).toBeInTheDocument();
+  });
+
+  it("adds a BOM item: posts childPartNumber, quantity, and prerequisites", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installBomRouter();
+    renderScreen();
+
+    await user.click(await screen.findByRole("button", { name: "Add BOM item" }));
+
+    // Dropdown loads and excludes the part being edited (THE-HOMER-001).
+    await screen.findByRole("option", { name: "ENGINE-V8-001 — V8 Engine" });
+    expect(
+      screen.queryByRole("option", { name: /THE-HOMER-001/ }),
+    ).not.toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByRole("combobox"),
+      "ENGINE-V8-001",
+    );
+    const qty = screen.getByRole("spinbutton");
+    await user.clear(qty);
+    await user.type(qty, "2");
+    // Mark the existing live line (WHEEL-001) as a prerequisite.
+    await user.click(
+      screen.getByRole("checkbox", { name: /WHEEL-001/ }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add item" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          /\/parts\/THE-HOMER-001\/bom$/.test(String(url)) &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+      expect(post).toBeDefined();
+      const body = JSON.parse((post?.[1] as RequestInit).body as string);
+      expect(body).toEqual({
+        childPartNumber: "ENGINE-V8-001",
+        quantity: 2,
+        prerequisites: ["b1"],
+      });
+    });
+  });
+
+  it("surfaces a server error (with code) when adding a BOM item fails", async () => {
+    const user = userEvent.setup();
+    installBomRouter({
+      onPost: () =>
+        jsonError(422, "Unprocessable", {
+          error: "Child part not found",
+          code: "CHILD_NOT_FOUND",
+        }),
+    });
+    renderScreen();
+
+    await user.click(await screen.findByRole("button", { name: "Add BOM item" }));
+    await screen.findByRole("option", { name: "ENGINE-V8-001 — V8 Engine" });
+    await user.selectOptions(screen.getByRole("combobox"), "ENGINE-V8-001");
+    await user.click(screen.getByRole("button", { name: "Add item" }));
+
+    const err = await screen.findByText(/Child part not found/);
+    expect(err).toHaveTextContent("[CHILD_NOT_FOUND]");
+  });
+
+  it("removes a BOM item: fires DELETE and refetches the BOM", async () => {
+    const user = userEvent.setup();
+    let bomGets = 0;
+    const fetchMock = installBomRouter({
+      onBomGet: () => {
+        bomGets += 1;
+        return jsonOk(BOM);
+      },
+    });
+    renderScreen();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Remove Whitewall Wheel from the BOM",
+      }),
+    );
+
+    await waitFor(() => {
+      const del = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          /\/parts\/THE-HOMER-001\/bom\/b1$/.test(String(url)) &&
+          (init as RequestInit | undefined)?.method === "DELETE",
+      );
+      expect(del).toBeDefined();
+    });
+    // The BOM list is refetched after the delete (invalidation).
+    await waitFor(() => expect(bomGets).toBeGreaterThan(1));
+  });
+
+  it("surfaces an inline error when removing a BOM item fails", async () => {
+    const user = userEvent.setup();
+    installBomRouter({
+      onDelete: () =>
+        jsonError(422, "Unprocessable", {
+          error: "BOM is locked once the part is released",
+          code: "PART_NOT_DRAFT",
+        }),
+    });
+    renderScreen();
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Remove Whitewall Wheel from the BOM",
+      }),
+    );
+
+    const err = await screen.findByText(
+      /BOM is locked once the part is released/,
+    );
+    expect(err).toHaveTextContent("[PART_NOT_DRAFT]");
+  });
+});
