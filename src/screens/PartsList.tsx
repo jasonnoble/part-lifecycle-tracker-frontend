@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { api } from "../apiClient";
 
 type Part = {
     id: string;
-    part_number: string;
+    partNumber: string;
     name: string;
+    description: string;
+    revision: string | null;
     status: string;
-    revision?: string;
+    createdAt: string;
+    updatedAt: string;
 };
 
 type PartsEnvelope = { data: Part[]; meta?: unknown };
@@ -45,14 +48,14 @@ function useDebounced<T>(value: T, delay = 250): T {
 type NewPartForm = {
     part_number: string;
     name: string;
-    status: string;
+    description: string;
     revision: string;
 };
 
 const EMPTY_FORM: NewPartForm = {
     part_number: "",
     name: "",
-    status: "DRAFT",
+    description: "",
     revision: "",
 };
 
@@ -68,8 +71,8 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
                 body: JSON.stringify({
                     part_number: body.part_number.trim(),
                     name: body.name.trim(),
-                    status: body.status,
-                    revision: body.revision.trim() || undefined,
+                    description: body.description.trim(),
+                    revision: body.revision.trim(),
                 }),
             }),
         onSuccess: () => {
@@ -82,7 +85,8 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
         const next: Partial<Record<keyof NewPartForm, string>> = {};
         if (!form.part_number.trim()) next.part_number = "Part number is required.";
         if (!form.name.trim()) next.name = "Name is required.";
-        if (!form.status.trim()) next.status = "Status is required.";
+        if (!form.description.trim()) next.description = "Description is required.";
+        if (!form.revision.trim()) next.revision = "Revision is required.";
         setErrors(next);
         return Object.keys(next).length === 0;
     }
@@ -135,36 +139,34 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
                     )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">
-                            Status <span className="text-red-500">*</span>
-                        </label>
-                        <select
-                            value={form.status}
-                            onChange={(e) => update("status", e.target.value)}
-                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                            <option value="DRAFT">DRAFT</option>
-                            <option value="RELEASED">RELEASED</option>
-                            <option value="OBSOLETE">OBSOLETE</option>
-                        </select>
-                        {errors.status && (
-                            <p className="mt-1 text-xs text-red-600">{errors.status}</p>
-                        )}
-                    </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                        Description <span className="text-red-500">*</span>
+                    </label>
+                    <textarea
+                        value={form.description}
+                        onChange={(e) => update("description", e.target.value)}
+                        rows={3}
+                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    {errors.description && (
+                        <p className="mt-1 text-xs text-red-600">{errors.description}</p>
+                    )}
+                </div>
 
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">
-                            Revision
-                        </label>
-                        <input
-                            type="text"
-                            value={form.revision}
-                            onChange={(e) => update("revision", e.target.value)}
-                            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                    </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                        Revision <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                        type="text"
+                        value={form.revision}
+                        onChange={(e) => update("revision", e.target.value)}
+                        className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    {errors.revision && (
+                        <p className="mt-1 text-xs text-red-600">{errors.revision}</p>
+                    )}
                 </div>
 
                 {mutation.isError && (
@@ -200,21 +202,18 @@ export default function PartsList() {
     const [showCreate, setShowCreate] = useState(false);
     const debouncedSearch = useDebounced(search, 250);
 
+    // Server-side search: the debounced term is sent as ?search= and the query
+    // refetches whenever it changes (the term is part of the query key).
     const { isPending, error, data } = useQuery({
-        queryKey: ["parts"],
-        queryFn: () => api<PartsEnvelope>("/parts"),
+        queryKey: ["parts", debouncedSearch],
+        queryFn: () => {
+            const q = debouncedSearch.trim();
+            const qs = q ? `?search=${encodeURIComponent(q)}` : "";
+            return api<PartsEnvelope>(`/parts${qs}`);
+        },
     });
 
-    const filtered = useMemo(() => {
-        const parts = data?.data ?? [];
-        const q = debouncedSearch.trim().toLowerCase();
-        if (!q) return parts;
-        return parts.filter(
-            (p) =>
-                p.name.toLowerCase().includes(q) ||
-                p.part_number.toLowerCase().includes(q),
-        );
-    }, [data, debouncedSearch]);
+    const parts = data?.data ?? [];
 
     return (
         <div className="p-6">
@@ -262,7 +261,7 @@ export default function PartsList() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
-                            {filtered.length === 0 && (
+                            {parts.length === 0 && (
                                 <tr>
                                     <td
                                         colSpan={4}
@@ -272,14 +271,16 @@ export default function PartsList() {
                                     </td>
                                 </tr>
                             )}
-                            {filtered.map((p) => (
+                            {parts.map((p) => (
                                 <tr
                                     key={p.id}
-                                    onClick={() => navigate(`/parts/${p.part_number}`)}
+                                    onClick={() =>
+                                        navigate(`/parts/${encodeURIComponent(p.partNumber)}`)
+                                    }
                                     className="cursor-pointer hover:bg-gray-50"
                                 >
                                     <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                                        {p.part_number}
+                                        {p.partNumber}
                                     </td>
                                     <td className="px-4 py-3 text-sm text-gray-700">
                                         {p.name}
