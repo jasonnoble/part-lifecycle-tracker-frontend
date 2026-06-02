@@ -9,6 +9,14 @@ export const ROLES = [
 
 export type RoleKey = (typeof ROLES)[number]["key"];
 
+/** Roles permitted to view/manage customer (sales) orders. */
+export const SALES_ROLES: readonly RoleKey[] = ["SALESPERSON", "SITE_MANAGER"];
+
+/** Whether `role` may access the Sales / Customer Orders screen. */
+export function canViewSales(role: RoleKey): boolean {
+  return SALES_ROLES.includes(role);
+}
+
 export function getRole(): RoleKey {
   const m = document.cookie.match(/(?:^|;\s*)actor_role=([^;]+)/);
   return (m?.[1] as RoleKey) ?? "TECH_1";

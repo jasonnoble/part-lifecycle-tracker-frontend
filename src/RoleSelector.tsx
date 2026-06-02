@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { ROLES, getRole, setRole, type RoleKey } from "./roles";
 
-export default function RoleSelector() {
+export default function RoleSelector({
+  onChange,
+}: {
+  /** Notified after the new role is persisted, so a parent can re-render. */
+  onChange?: (role: RoleKey) => void;
+} = {}) {
   const [role, setLocal] = useState<RoleKey>(getRole);
   return (
     <div className="flex items-center gap-2">
@@ -19,6 +24,7 @@ export default function RoleSelector() {
           const next = e.target.value as RoleKey;
           setRole(next);   // persist to cookie
           setLocal(next);  // re-render
+          onChange?.(next); // let a parent (Layout) re-render too
         }}
         className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
       >

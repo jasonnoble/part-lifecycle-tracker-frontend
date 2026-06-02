@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { apiList } from "../apiClient";
 import { StatusBadge, type Tone } from "../components/Badge";
+import { useDocumentTitle } from "../useDocumentTitle";
 import { STEP_STATUS_TONES, type WorkOrder } from "./workOrders";
 
 // Work-order (not step) status tones.
@@ -58,6 +59,7 @@ function sortWorkOrders(orders: WorkOrder[]): WorkOrder[] {
 }
 
 export default function WorkOrdersList() {
+  useDocumentTitle("Assembly Line");
   const navigate = useNavigate();
 
   const { isPending, error, data } = useQuery({

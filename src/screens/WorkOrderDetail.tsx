@@ -5,6 +5,7 @@ import { api, ApiError } from "../apiClient";
 import { getRole, type RoleKey } from "../roles";
 import type { BomItem } from "../api/types";
 import { StatusBadge } from "../components/Badge";
+import { useDocumentTitle } from "../useDocumentTitle";
 import {
   STEP_STATUS_TONES,
   type WorkOrder,
@@ -132,6 +133,10 @@ export default function WorkOrderDetail() {
     enabled: !!partNumber,
   });
   const bomItems = bomData?.data ?? [];
+
+  useDocumentTitle(
+    workOrder ? `Work Order ${workOrder.serialNumber}` : "Work Order",
+  );
 
   // installedSerial input state, keyed by step id.
   const [serials, setSerials] = useState<Record<string, string>>({});

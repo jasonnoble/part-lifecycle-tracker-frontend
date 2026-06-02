@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 import { api, apiList } from "../apiClient";
 import type { Part } from "../api/types";
 import { StatusBadge, type Tone } from "../components/Badge";
+import { useDocumentTitle } from "../useDocumentTitle";
 
 const STATUS_TONES: Record<string, Tone> = {
   DRAFT: "warning",
@@ -201,6 +202,7 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
 }
 
 export default function PartsList() {
+  useDocumentTitle("Parts");
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);

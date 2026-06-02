@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { api, apiList } from "../apiClient";
 import { Badge, StatusBadge, type Tone } from "../components/Badge";
+import { useDocumentTitle } from "../useDocumentTitle";
 
 type TestResult = "PASS" | "FAIL" | "INCONCLUSIVE";
 
@@ -56,6 +57,7 @@ function formatTimestamp(value?: string | null): string {
 
 export default function InstanceDetail() {
   const { serial } = useParams<{ serial: string }>();
+  useDocumentTitle(serial);
 
   const instanceQuery = useQuery({
     queryKey: ["instance", serial],
