@@ -78,8 +78,10 @@ function deriveFulfillment(
 // fall back to `neutral` for anything unrecognized.
 const ORDER_STATUS_TONES: Record<string, Tone> = {
   OPEN: "info",
+  IN_FULFILLMENT: "warning",
   SHIPPED: "info",
   DELIVERED: "success",
+  FULFILLED: "success",
   CANCELLED: "danger",
 };
 
@@ -124,12 +126,12 @@ function OrderDetail({ orderId }: { orderId: string }) {
 
   return (
     <div className="p-4">
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
         <h3 className="text-base font-semibold text-gray-900">
-          Order {data.id}
+          {data.customerName}
         </h3>
         <OrderStatusBadge status={data.status} />
-        <span className="text-sm text-gray-500">{data.customerName}</span>
+        <span className="font-mono text-xs text-gray-500">{data.id}</span>
       </div>
       <table className="w-full text-left text-sm">
         <thead>
@@ -412,7 +414,7 @@ export default function CustomerOrders() {
 
   if (!allowed) {
     return (
-      <div className="mx-auto max-w-2xl p-6">
+      <div className="max-w-2xl">
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
           <h1 className="mb-1 text-lg font-semibold">Sales / Customer Orders</h1>
           <p className="text-sm">
@@ -425,7 +427,7 @@ export default function CustomerOrders() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
+    <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Customer Orders</h1>
         <button
@@ -456,19 +458,20 @@ export default function CustomerOrders() {
                   onClick={() =>
                     setSelectedId(isOpen ? null : order.id)
                   }
+                  aria-expanded={isOpen}
                   className="flex w-full items-center justify-between gap-4 p-4 text-left hover:bg-gray-50"
                 >
-                  <span className="flex items-center gap-3">
-                    <span className="font-mono text-sm text-gray-900">
-                      {order.id}
-                    </span>
-                    <span className="text-sm text-gray-500">
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm font-medium text-gray-900">
                       {order.customerName}
                     </span>
+                    <span className="font-mono text-xs text-gray-500">
+                      {order.id}
+                    </span>
                   </span>
-                  <span className="flex items-center gap-3">
+                  <span className="flex shrink-0 items-center gap-3">
                     <OrderStatusBadge status={order.status} />
-                    <span className="text-xs text-gray-400">
+                    <span aria-hidden="true" className="text-xs text-gray-500">
                       {isOpen ? "▲" : "▼"}
                     </span>
                   </span>

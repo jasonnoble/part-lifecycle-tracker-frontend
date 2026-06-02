@@ -128,6 +128,29 @@ describe("PartsList", () => {
     );
   });
 
+  it("navigates from a focused row on Enter (keyboard access)", async () => {
+    const user = userEvent.setup();
+    mockFetch(SAMPLE_PARTS);
+
+    renderScreen();
+
+    const row = (await screen.findByText("THE-HOMER-001")).closest("tr")!;
+    row.focus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith("/parts/THE-HOMER-001"),
+    );
+  });
+
+  it("shows a singular result count when exactly one part is returned", async () => {
+    mockFetch({ data: [SAMPLE_PARTS.data[0]], meta: { total: 1 } });
+
+    renderScreen();
+
+    expect(await screen.findByText("1 part")).toBeInTheDocument();
+  });
+
   describe("New Part modal", () => {
     it("opens the modal when New Part is clicked", async () => {
       const user = userEvent.setup();

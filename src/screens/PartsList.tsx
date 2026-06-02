@@ -40,6 +40,15 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
   const [form, setForm] = useState<NewPartForm>(EMPTY_FORM);
   const [errors, setErrors] = useState<Partial<Record<keyof NewPartForm, string>>>({});
 
+  // Close on Escape — a standard dialog affordance.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const mutation = useMutation({
     mutationFn: (body: NewPartForm) =>
       api<Part>("/parts", {
@@ -79,12 +88,21 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-10 flex items-start justify-center bg-black/30 p-4 pt-24">
+    <div
+      className="fixed inset-0 z-10 flex items-start justify-center bg-black/30 p-4 pt-24"
+      onClick={onClose}
+    >
       <form
         onSubmit={handleSubmit}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="new-part-heading"
         className="w-full max-w-md space-y-4 rounded-lg bg-white p-6 shadow-xl"
       >
-        <h2 className="text-lg font-semibold text-gray-900">New Part</h2>
+        <h2 id="new-part-heading" className="text-lg font-semibold text-gray-900">
+          New Part
+        </h2>
 
         <div>
           <label className="block text-sm font-medium text-gray-700">
@@ -92,6 +110,7 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
           </label>
           <input
             type="text"
+            autoFocus
             value={form.partNumber}
             onChange={(e: ChangeEvent<HTMLInputElement>) =>
               update("partNumber", e.target.value)
@@ -201,7 +220,7 @@ export default function PartsList() {
   const parts = data ?? [];
 
   return (
-    <div className="p-6">
+    <div>
       <div className="mb-4 flex items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900">Parts</h1>
         <button
@@ -226,6 +245,13 @@ export default function PartsList() {
       {error && (
         <p role="alert" className="text-red-600">
           Error: {error.message}
+        </p>
+      )}
+
+      {!isPending && !error && (
+        <p className="mb-2 text-sm text-gray-500">
+          {parts.length} {parts.length === 1 ? "part" : "parts"}
+          {debouncedSearch.trim() && ` matching “${debouncedSearch.trim()}”`}
         </p>
       )}
 
@@ -259,13 +285,23 @@ export default function PartsList() {
                   </td>
                 </tr>
               )}
-              {parts.map((p) => (
+              {parts.map((p) => {
+                const goToPart = () =>
+                  navigate(`/parts/${encodeURIComponent(p.partNumber)}`);
+                return (
                 <tr
                   key={p.id}
-                  onClick={() =>
-                    navigate(`/parts/${encodeURIComponent(p.partNumber)}`)
-                  }
-                  className="cursor-pointer hover:bg-gray-50"
+                  onClick={goToPart}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      goToPart();
+                    }
+                  }}
+                  role="link"
+                  tabIndex={0}
+                  aria-label={`View part ${p.partNumber}, ${p.name}`}
+                  className="cursor-pointer hover:bg-gray-50 focus:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
                 >
                   <td className="px-4 py-3 text-sm font-medium text-gray-900">
                     {p.partNumber}
@@ -280,7 +316,8 @@ export default function PartsList() {
                     <StatusBadge value={p.status} tones={STATUS_TONES} />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

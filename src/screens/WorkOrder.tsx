@@ -232,11 +232,11 @@ export default function WorkOrder() {
     },
   });
 
-  if (isPending) return <p className="p-4">Loading…</p>;
+  if (isPending) return <p className="text-gray-500">Loading…</p>;
   if (error)
-    return <p className="p-4 text-red-600">Error: {error.message}</p>;
+    return <p className="text-red-600">Error: {error.message}</p>;
   if (!workOrder)
-    return <p className="p-4 text-gray-600">No active work order.</p>;
+    return <p className="text-gray-600">No active work order.</p>;
 
   const steps = workOrder.steps ?? [];
   const allCertified =
@@ -256,8 +256,8 @@ export default function WorkOrder() {
   }
 
   return (
-    <section className="mx-auto max-w-3xl p-4">
-      <div className="mb-4 flex items-baseline justify-between">
+    <section className="mx-auto max-w-3xl">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
             Work Order {workOrder.serialNumber}
@@ -266,32 +266,44 @@ export default function WorkOrder() {
             {workOrder.partNumber} · {workOrder.status}
           </p>
         </div>
-        <span className="text-sm text-gray-500">
+        <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-600">
           Acting as {actorEmail}
         </span>
       </div>
 
-      <ul className="space-y-2">
-        {steps.map((step) => (
-          <StepRow
-            key={step.id}
-            step={step}
-            blocked={deriveBlocked(step, steps, bomItems)}
-            currentRole={currentRole}
-            actorEmail={actorEmail}
-            serial={serials[step.id] ?? ""}
-            onSerialChange={(v) =>
-              setSerials((prev) => ({ ...prev, [step.id]: v }))
-            }
-            error={errors[step.id]}
-            pending={
-              stepMutation.isPending &&
-              stepMutation.variables?.stepId === step.id
-            }
-            onAction={(action) => runAction(step, action)}
-          />
-        ))}
-      </ul>
+      {steps.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-6 text-center">
+          <p className="text-sm font-medium text-gray-700">
+            This work order has no assembly steps yet.
+          </p>
+          <p className="mt-1 text-sm text-gray-500">
+            Steps appear here once the bill of materials is expanded into
+            installable components.
+          </p>
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {steps.map((step) => (
+            <StepRow
+              key={step.id}
+              step={step}
+              blocked={deriveBlocked(step, steps, bomItems)}
+              currentRole={currentRole}
+              actorEmail={actorEmail}
+              serial={serials[step.id] ?? ""}
+              onSerialChange={(v) =>
+                setSerials((prev) => ({ ...prev, [step.id]: v }))
+              }
+              error={errors[step.id]}
+              pending={
+                stepMutation.isPending &&
+                stepMutation.variables?.stepId === step.id
+              }
+              onAction={(action) => runAction(step, action)}
+            />
+          ))}
+        </ul>
+      )}
 
       <div className="mt-6 flex flex-col gap-2">
         <div className="flex items-center gap-3">
@@ -371,7 +383,7 @@ function StepRow({
 
   return (
     <li className="rounded-lg border border-gray-200 p-3">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-mono text-sm text-gray-500">
@@ -400,7 +412,7 @@ function StepRow({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-3">
           <StatusBadge value={displayStatus} tones={STATUS_TONES} />
           {action === "install" && !isBlocked && (
             <input
@@ -408,6 +420,7 @@ function StepRow({
               value={serial}
               onChange={(e) => onSerialChange(e.target.value)}
               placeholder="Serial #"
+              aria-label={`Serial number to install for ${step.childPartName}`}
               className="w-36 rounded-md border border-gray-300 px-2 py-1 text-sm"
             />
           )}
