@@ -129,6 +129,23 @@ describe("WorkOrder", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows an empty state when the active work order has no steps", async () => {
+    mockFetchByUrl([
+      workOrdersRoute([makeWorkOrder([])]),
+      emptyBomRoute(),
+    ]);
+
+    renderScreen();
+
+    expect(
+      await screen.findByText("This work order has no assembly steps yet."),
+    ).toBeInTheDocument();
+    // With no steps, completion stays disabled.
+    expect(
+      screen.getByRole("button", { name: "Complete work order" }),
+    ).toBeDisabled();
+  });
+
   it("enables Install for a PENDING step as TECH_1 and fires the action, then refetches", async () => {
     const user = userEvent.setup();
     let workOrdersCallCount = 0;
