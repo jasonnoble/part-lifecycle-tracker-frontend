@@ -1,10 +1,20 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, api } from "../apiClient";
+import { ApiError, api, apiList } from "../apiClient";
 import { StatusBadge, type Tone } from "../components/Badge";
 import type { BomItem, Part, PartStatus } from "../api/types";
 import { useDocumentTitle } from "../useDocumentTitle";
+
+// Surface a thrown value as a user-facing message, prefixing the server's
+// `[code]` for ApiErrors (e.g. [CHILD_NOT_FOUND]).
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    return `${err.code ? `[${err.code}] ` : ""}${err.message}`;
+  }
+  if (err instanceof Error) return err.message;
+  return "Request failed";
+}
 
 // --- Types (camelCase, matching the real backend) ------------------------
 // Part / BomItem / PartStatus are shared via ../api/types. The /bom endpoint
@@ -112,6 +122,164 @@ function ContextModal({
   );
 }
 
+// --- Add BOM item form ---------------------------------------------------
+// Inline editor shown only while the parent part is DRAFT. Lets you pick a
+// child part, a quantity, and optional prerequisite BOM items (the new line is
+// blocked until those are certified during assembly). Stays open after a
+// successful add so a BOM can be built up quickly.
+
+function AddBomItemForm({
+  partNumber,
+  existingItems,
+  onClose,
+}: {
+  partNumber: string;
+  existingItems: BomItem[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [childPartNumber, setChildPartNumber] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [prerequisites, setPrerequisites] = useState<string[]>([]);
+
+  // Parts to offer as children — every part except the one being edited.
+  const partsQuery = useQuery({
+    queryKey: ["parts"],
+    queryFn: () => apiList<Part>("/parts"),
+  });
+  const childOptions = (partsQuery.data ?? []).filter(
+    (p) => p.partNumber !== partNumber,
+  );
+
+  const addItem = useMutation({
+    mutationFn: () =>
+      api<BomItem>(`/parts/${partNumber}/bom`, {
+        method: "POST",
+        body: JSON.stringify({
+          childPartNumber,
+          quantity,
+          prerequisites,
+        }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["part", partNumber, "bom"] });
+      queryClient.invalidateQueries({
+        queryKey: ["part", partNumber, "context"],
+      });
+      // Reset for the next line but keep the form open for rapid entry.
+      setChildPartNumber("");
+      setQuantity(1);
+      setPrerequisites([]);
+    },
+  });
+
+  const canSubmit = childPartNumber !== "" && quantity >= 1;
+
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    addItem.mutate();
+  }
+
+  function togglePrerequisite(id: string) {
+    setPrerequisites((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
+    );
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      aria-label="Add BOM item"
+      className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4"
+    >
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="flex flex-col text-sm">
+          <span className="mb-1 font-medium text-gray-700">Child part</span>
+          <select
+            value={childPartNumber}
+            onChange={(e) => setChildPartNumber(e.target.value)}
+            className="min-w-56 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+            required
+          >
+            <option value="" disabled>
+              {partsQuery.isPending ? "Loading parts…" : "Select a part…"}
+            </option>
+            {childOptions.map((p) => (
+              <option key={p.id} value={p.partNumber}>
+                {p.partNumber} — {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col text-sm">
+          <span className="mb-1 font-medium text-gray-700">Quantity</span>
+          <input
+            type="number"
+            min={1}
+            value={quantity}
+            onChange={(e) => setQuantity(Number(e.target.value))}
+            className="w-24 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+            required
+          />
+        </label>
+      </div>
+
+      {existingItems.length > 0 && (
+        <fieldset className="mt-3">
+          <legend className="mb-1 text-sm font-medium text-gray-700">
+            Prerequisites{" "}
+            <span className="font-normal text-gray-400">
+              (must be certified first — optional)
+            </span>
+          </legend>
+          <div className="flex flex-wrap gap-3">
+            {existingItems.map((item) => (
+              <label
+                key={item.id}
+                className="flex items-center gap-1.5 text-sm text-gray-700"
+              >
+                <input
+                  type="checkbox"
+                  checked={prerequisites.includes(item.id)}
+                  onChange={() => togglePrerequisite(item.id)}
+                />
+                <span className="font-mono text-xs">
+                  {item.childPartNumber}
+                </span>
+                <span>{item.childPartName}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      )}
+
+      <div className="mt-4 flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={!canSubmit || addItem.isPending}
+          className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {addItem.isPending ? "Adding…" : "Add item"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+        >
+          Done
+        </button>
+        {addItem.error && (
+          <span className="text-sm text-red-600">
+            {errorMessage(addItem.error)}
+          </span>
+        )}
+      </div>
+    </form>
+  );
+}
+
 // --- Screen --------------------------------------------------------------
 
 export default function PartDetail() {
@@ -119,6 +287,9 @@ export default function PartDetail() {
   useDocumentTitle(partNumber);
   const queryClient = useQueryClient();
   const [showContext, setShowContext] = useState(false);
+  const [showAddBom, setShowAddBom] = useState(false);
+  // Inline error for a failed BOM-row delete, keyed by bom item id.
+  const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
 
   const enabled = Boolean(partNumber);
 
@@ -156,6 +327,28 @@ export default function PartDetail() {
     },
   });
 
+  const deleteBomItem = useMutation({
+    // DELETE /parts/:partNumber/bom/:bomItemId — soft-deletes the line.
+    mutationFn: (bomItemId: string) =>
+      api<BomItem>(`/parts/${partNumber}/bom/${bomItemId}`, {
+        method: "DELETE",
+      }),
+    onSuccess: (_data, bomItemId) => {
+      setDeleteErrors((prev) => {
+        const next = { ...prev };
+        delete next[bomItemId];
+        return next;
+      });
+      queryClient.invalidateQueries({ queryKey: ["part", partNumber, "bom"] });
+      queryClient.invalidateQueries({
+        queryKey: ["part", partNumber, "context"],
+      });
+    },
+    onError: (err: unknown, bomItemId) => {
+      setDeleteErrors((prev) => ({ ...prev, [bomItemId]: errorMessage(err) }));
+    },
+  });
+
   // Header drives the screen; gate on the part query.
   if (partQuery.isPending) return <p>Loading…</p>;
   if (partQuery.error)
@@ -163,6 +356,10 @@ export default function PartDetail() {
 
   const part = partQuery.data;
   const bomLines = bomQuery.data?.data ?? [];
+  // The BOM is editable only while the part is DRAFT (locked once RELEASED).
+  const isDraft = part.status === "DRAFT";
+  // Live (non-deleted) lines are the only valid prerequisites for a new line.
+  const activeBomItems = bomLines.filter((l) => !l.deletedAt);
   const byStatus = contextQuery.data?.inventory?.byStatus ?? {};
   const instanceStatuses = Object.keys(byStatus);
 
@@ -261,7 +458,34 @@ export default function PartDetail() {
 
       {/* BOM */}
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Bill of Materials</h2>
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="text-lg font-semibold">Bill of Materials</h2>
+          {isDraft && !showAddBom && (
+            <button
+              type="button"
+              onClick={() => setShowAddBom(true)}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Add BOM item
+            </button>
+          )}
+        </div>
+
+        {isDraft ? (
+          showAddBom && partNumber ? (
+            <AddBomItemForm
+              partNumber={partNumber}
+              existingItems={activeBomItems}
+              onClose={() => setShowAddBom(false)}
+            />
+          ) : null
+        ) : (
+          <p className="text-sm text-gray-500">
+            The BOM is locked because this part is {part.status}. Only DRAFT
+            parts can be edited.
+          </p>
+        )}
+
         {bomQuery.isPending ? (
           <p className="text-gray-500">Loading…</p>
         ) : bomQuery.error ? (
@@ -278,11 +502,15 @@ export default function PartDetail() {
                 <th className="py-1 pr-4">Name</th>
                 <th className="py-1 pr-4">Qty</th>
                 <th className="py-1 pr-4">Deleted</th>
+                {isDraft && <th className="py-1 pr-4">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {bomLines.map((line) => {
                 const { deletedAt } = line;
+                const removing =
+                  deleteBomItem.isPending &&
+                  deleteBomItem.variables === line.id;
                 return (
                   <tr
                     key={line.id}
@@ -311,6 +539,28 @@ export default function PartDetail() {
                         ? formatDate(deletedAt)
                         : "—"}
                     </td>
+                    {isDraft && (
+                      <td className="py-1 pr-4 no-underline">
+                        {deletedAt ? null : (
+                          <div className="flex flex-col items-start gap-0.5">
+                            <button
+                              type="button"
+                              disabled={removing}
+                              onClick={() => deleteBomItem.mutate(line.id)}
+                              aria-label={`Remove ${line.childPartName} from the BOM`}
+                              className="text-sm font-medium text-red-600 hover:text-red-700 hover:underline disabled:cursor-not-allowed disabled:text-gray-400"
+                            >
+                              {removing ? "Removing…" : "Remove"}
+                            </button>
+                            {deleteErrors[line.id] && (
+                              <span className="text-xs text-red-600">
+                                {deleteErrors[line.id]}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
