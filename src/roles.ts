@@ -17,6 +17,23 @@ export function canViewSales(role: RoleKey): boolean {
   return SALES_ROLES.includes(role);
 }
 
+// The backend `actor` field is an EMAIL, not a role key or person name. The
+// installer/validator/certifier emails are fixed by the API spec examples;
+// the rest are stable best-guesses. Used to pre-fill "actor"/"conductedBy"
+// inputs with a sensible default for the active role.
+const ACTOR_EMAIL: Record<RoleKey, string> = {
+  TECH_1: "jamie@factory.com",
+  TECH_2: "riley@factory.com",
+  QA: "quinn@factory.com",
+  SALESPERSON: "sarah@factory.com",
+  FLOOR_MANAGER: "marcus@factory.com",
+  SITE_MANAGER: "alex@factory.com",
+};
+
+export function actorEmailForRole(role: RoleKey): string {
+  return ACTOR_EMAIL[role];
+}
+
 export function getRole(): RoleKey {
   const m = document.cookie.match(/(?:^|;\s*)actor_role=([^;]+)/);
   return (m?.[1] as RoleKey) ?? "TECH_1";

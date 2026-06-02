@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { api, ApiError } from "../apiClient";
-import { getRole, type RoleKey } from "../roles";
+import { actorEmailForRole, getRole, type RoleKey } from "../roles";
 import type { BomItem } from "../api/types";
 import { StatusBadge } from "../components/Badge";
 import { useDocumentTitle } from "../useDocumentTitle";
@@ -16,30 +16,6 @@ import {
 // PENDING steps are blocked by an uncertified prerequisite. `BomItem` comes
 // from the shared API types.
 type BomResponse = { data: BomItem[] };
-
-// ---------------------------------------------------------------------------
-// Role -> actor email mapping
-//   The `actor` field is an EMAIL, not a role key or person name.
-//   Known from the spec examples:
-//     TECH_1 -> jamie@factory.com (installer)
-//     TECH_2 -> riley@factory.com (validator)
-//     QA     -> quinn@factory.com (certifier; has the QA role server-side)
-//   Other roles are best-guess derived emails (they can't perform step
-//   actions anyway, but we provide a stable value).
-// ---------------------------------------------------------------------------
-const ROLE_ACTOR_EMAIL: Record<RoleKey, string> = {
-  TECH_1: "jamie@factory.com",
-  TECH_2: "riley@factory.com",
-  QA: "quinn@factory.com",
-  // best-guess (not used for install/validate/certify):
-  SALESPERSON: "sarah@factory.com",
-  FLOOR_MANAGER: "marcus@factory.com",
-  SITE_MANAGER: "alex@factory.com",
-};
-
-function actorEmailForRole(role: RoleKey): string {
-  return ROLE_ACTOR_EMAIL[role];
-}
 
 // Format an unknown thrown value into a user-facing message, surfacing the
 // server-provided `[code]` prefix for ApiErrors.

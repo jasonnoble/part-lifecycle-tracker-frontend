@@ -1,4 +1,5 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import InstanceDetail from "./InstanceDetail";
 import {
@@ -289,5 +290,156 @@ describe("InstanceDetail", () => {
     expect(
       await screen.findByText(/Error: 503 Unavailable/),
     ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recording lifecycle events + test results (JAS-70)
+// ---------------------------------------------------------------------------
+describe("InstanceDetail — recording", () => {
+  const method = (init?: RequestInit) => init?.method ?? "GET";
+
+  // Router that distinguishes POST writes from the GET reads (the read-only
+  // stubRouterFetch matches by URL only, so a POST would hit the GET route).
+  function installWriteRouter(
+    over: { onEventPost?: () => unknown; onTestPost?: () => unknown } = {},
+  ) {
+    return mockFetchByUrl([
+      {
+        match: (url, init) =>
+          method(init) === "POST" &&
+          url.endsWith(`/instances/${SERIAL}/events`),
+        respond: over.onEventPost ?? (() => jsonOk(eventsBody.data[0])),
+      },
+      {
+        match: (url, init) =>
+          method(init) === "POST" &&
+          url.endsWith(`/instances/${SERIAL}/tests`),
+        respond: over.onTestPost ?? (() => jsonOk(testsBody.data[0])),
+      },
+      {
+        match: (url) => url.endsWith(`/instances/${SERIAL}/events`),
+        respond: () => jsonOk(eventsBody),
+      },
+      {
+        match: (url) => url.endsWith(`/instances/${SERIAL}/tests`),
+        respond: () => jsonOk(testsBody),
+      },
+      {
+        match: (url) => url.endsWith(`/instances/${SERIAL}`),
+        respond: () => jsonOk(instanceBody),
+      },
+    ]);
+  }
+
+  it("records a lifecycle event: posts eventType, actor, notes, occurredAt", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installWriteRouter();
+    renderScreen();
+
+    await user.click(await screen.findByRole("button", { name: "Record event" }));
+
+    // Form prefills the actor from the active role (TECH_1 → jamie).
+    const form = screen.getByRole("form", { name: "Record lifecycle event" });
+    await user.selectOptions(
+      within(form).getByLabelText("Event type"),
+      "INSPECTED",
+    );
+    await user.type(within(form).getByLabelText("Notes (optional)"), "Looks good");
+    await user.click(within(form).getByRole("button", { name: "Record event" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          /\/instances\/HMR-0001\/events$/.test(String(url)) &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+      expect(post).toBeDefined();
+      const body = JSON.parse((post?.[1] as RequestInit).body as string);
+      expect(body.eventType).toBe("INSPECTED");
+      expect(body.actor).toBe("jamie@factory.com");
+      expect(body.notes).toBe("Looks good");
+      // occurredAt is sent as an ISO timestamp.
+      expect(body.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    // Form closes on success (the toggle button returns).
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("form", { name: "Record lifecycle event" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("records a test result: posts testType, result, conductedBy, notes", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installWriteRouter();
+    renderScreen();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add test result" }),
+    );
+
+    const form = screen.getByRole("form", { name: "Add test result" });
+    await user.type(within(form).getByLabelText("Test type"), "Pressure test");
+    await user.selectOptions(within(form).getByLabelText("Result"), "FAIL");
+    await user.click(
+      within(form).getByRole("button", { name: "Add test result" }),
+    );
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) =>
+          /\/instances\/HMR-0001\/tests$/.test(String(url)) &&
+          (init as RequestInit | undefined)?.method === "POST",
+      );
+      expect(post).toBeDefined();
+      const body = JSON.parse((post?.[1] as RequestInit).body as string);
+      expect(body.testType).toBe("Pressure test");
+      expect(body.result).toBe("FAIL");
+      expect(body.conductedBy).toBe("jamie@factory.com");
+      expect(body.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+  });
+
+  it("surfaces a server error (with code) when recording an event fails", async () => {
+    const user = userEvent.setup();
+    installWriteRouter({
+      onEventPost: () =>
+        jsonError(422, "Unprocessable", {
+          error: "Actor can't be blank",
+          code: "VALIDATION_FAILED",
+        }),
+    });
+    renderScreen();
+
+    await user.click(await screen.findByRole("button", { name: "Record event" }));
+    const form = screen.getByRole("form", { name: "Record lifecycle event" });
+    await user.click(within(form).getByRole("button", { name: "Record event" }));
+
+    const err = await screen.findByText(/Actor can't be blank/);
+    expect(err).toHaveTextContent("[VALIDATION_FAILED]");
+    // Form stays open so the user can correct and retry.
+    expect(
+      screen.getByRole("form", { name: "Record lifecycle event" }),
+    ).toBeInTheDocument();
+  });
+
+  it("can cancel the record-event form without posting", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installWriteRouter();
+    renderScreen();
+
+    await user.click(await screen.findByRole("button", { name: "Record event" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(
+      screen.queryByRole("form", { name: "Record lifecycle event" }),
+    ).not.toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(
+        ([, init]) => (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(false);
   });
 });
