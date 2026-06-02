@@ -1,10 +1,14 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
-import { RouterProvider, createMemoryRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
 import InstanceDetail from "./InstanceDetail";
+import {
+    jsonOk,
+    jsonError,
+    mockFetchByUrl,
+    renderWithProviders,
+} from "../test/utils";
 
-type JsonResponse = {
+type Override = {
     ok?: boolean;
     status?: number;
     statusText?: string;
@@ -80,13 +84,15 @@ const testsBody = {
     meta: { total: 3 },
 };
 
-function jsonResponse({ ok = true, status = 200, statusText = "OK", body }: JsonResponse) {
-    return {
-        ok,
-        status,
-        statusText,
-        json: async () => body,
-    };
+/** Map a per-endpoint override to a shared `jsonOk`/`jsonError` response. */
+function toResponse(override: Override) {
+    return override.ok === false
+        ? jsonError(
+              override.status ?? 500,
+              override.statusText ?? "Error",
+              override.body,
+          )
+        : jsonOk(override.body);
 }
 
 /**
@@ -95,55 +101,39 @@ function jsonResponse({ ok = true, status = 200, statusText = "OK", body }: Json
  */
 function stubRouterFetch(
     overrides: {
-        instance?: JsonResponse;
-        events?: JsonResponse;
-        tests?: JsonResponse;
+        instance?: Override;
+        events?: Override;
+        tests?: Override;
     } = {},
 ) {
-    const fetchMock = vi.fn((input: string | URL) => {
-        const url = String(input);
-        if (url.endsWith(`/instances/${SERIAL}/events`)) {
-            return Promise.resolve(
-                jsonResponse(overrides.events ?? { body: eventsBody }),
-            );
-        }
-        if (url.endsWith(`/instances/${SERIAL}/tests`)) {
-            return Promise.resolve(
-                jsonResponse(overrides.tests ?? { body: testsBody }),
-            );
-        }
-        if (url.endsWith(`/instances/${SERIAL}`)) {
-            return Promise.resolve(
-                jsonResponse(overrides.instance ?? { body: instanceBody }),
-            );
-        }
-        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    return fetchMock;
+    return mockFetchByUrl([
+        {
+            match: (url) => url.endsWith(`/instances/${SERIAL}/events`),
+            respond: () => toResponse(overrides.events ?? { body: eventsBody }),
+        },
+        {
+            match: (url) => url.endsWith(`/instances/${SERIAL}/tests`),
+            respond: () => toResponse(overrides.tests ?? { body: testsBody }),
+        },
+        {
+            match: (url) => url.endsWith(`/instances/${SERIAL}`),
+            respond: () =>
+                toResponse(overrides.instance ?? { body: instanceBody }),
+        },
+    ]);
 }
 
 function renderScreen() {
-    const client = new QueryClient({
-        defaultOptions: { queries: { retry: false } },
+    return renderWithProviders(<InstanceDetail />, {
+        route: {
+            path: "/instances/:serial",
+            initialEntry: `/instances/${SERIAL}`,
+        },
     });
-    const router = createMemoryRouter(
-        [{ path: "/instances/:serial", element: <InstanceDetail /> }],
-        { initialEntries: [`/instances/${SERIAL}`] },
-    );
-    return render(
-        <QueryClientProvider client={client}>
-            <RouterProvider router={router} />
-        </QueryClientProvider>,
-    );
 }
 
 beforeEach(() => {
     stubRouterFetch();
-});
-
-afterEach(() => {
-    vi.unstubAllGlobals();
 });
 
 describe("InstanceDetail", () => {
@@ -245,15 +235,17 @@ describe("InstanceDetail", () => {
     it("shows per-section loading states while events and tests are pending", async () => {
         // Instance resolves immediately; events/tests never resolve so the
         // section-level loading branches render.
-        const fetchMock = vi.fn((input: string | URL) => {
-            const url = String(input);
-            if (url.endsWith(`/instances/${SERIAL}`)) {
-                return Promise.resolve(jsonResponse({ body: instanceBody }));
-            }
+        mockFetchByUrl([
+            {
+                match: (url) => url.endsWith(`/instances/${SERIAL}`),
+                respond: () => jsonOk(instanceBody),
+            },
             // events + tests: pending forever.
-            return new Promise(() => {});
-        });
-        vi.stubGlobal("fetch", fetchMock);
+            {
+                match: () => true,
+                respond: () => new Promise(() => {}),
+            },
+        ]);
 
         renderScreen();
 

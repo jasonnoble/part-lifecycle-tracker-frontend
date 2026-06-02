@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
-import { api } from "../apiClient";
+import { api, apiList } from "../apiClient";
+import { Badge, StatusBadge, type Tone } from "../components/Badge";
 
 type TestResult = "PASS" | "FAIL" | "INCONCLUSIVE";
 
@@ -34,12 +35,10 @@ type TestRecord = {
     recordedAt: string;
 };
 
-type ListResponse<T> = { data: T[]; meta: unknown };
-
-const RESULT_STYLES: Record<TestResult, string> = {
-    PASS: "bg-green-100 text-green-800 ring-green-600/20",
-    FAIL: "bg-red-100 text-red-800 ring-red-600/20",
-    INCONCLUSIVE: "bg-gray-100 text-gray-700 ring-gray-500/20",
+const RESULT_TONES: Record<TestResult, Tone> = {
+    PASS: "success",
+    FAIL: "danger",
+    INCONCLUSIVE: "neutral",
 };
 
 function formatTimestamp(value?: string | null): string {
@@ -55,17 +54,6 @@ function formatTimestamp(value?: string | null): string {
     });
 }
 
-function ResultBadge({ result }: { result: TestResult }) {
-    const style = RESULT_STYLES[result] ?? RESULT_STYLES.INCONCLUSIVE;
-    return (
-        <span
-            className={`inline-flex items-center rounded-md px-2 py-1 text-xs font-semibold ring-1 ring-inset ${style}`}
-        >
-            {result}
-        </span>
-    );
-}
-
 export default function InstanceDetail() {
     const { serial } = useParams<{ serial: string }>();
 
@@ -77,21 +65,19 @@ export default function InstanceDetail() {
 
     const eventsQuery = useQuery({
         queryKey: ["instance", serial, "events"],
-        queryFn: () =>
-            api<ListResponse<LifecycleEvent>>(`/instances/${serial}/events`),
+        queryFn: () => apiList<LifecycleEvent>(`/instances/${serial}/events`),
         enabled: Boolean(serial),
     });
 
     const testsQuery = useQuery({
         queryKey: ["instance", serial, "tests"],
-        queryFn: () =>
-            api<ListResponse<TestRecord>>(`/instances/${serial}/tests`),
+        queryFn: () => apiList<TestRecord>(`/instances/${serial}/tests`),
         enabled: Boolean(serial),
     });
 
     // Events are returned ordered by occurred_at ASC; re-sort defensively.
     // Memoized above the early returns to keep hook order stable.
-    const eventsData = eventsQuery.data?.data;
+    const eventsData = eventsQuery.data;
     const events = useMemo(
         () =>
             [...(eventsData ?? [])].sort(
@@ -115,7 +101,7 @@ export default function InstanceDetail() {
 
     const instance = instanceQuery.data;
 
-    const testRecords = testsQuery.data?.data ?? [];
+    const testRecords = testsQuery.data ?? [];
 
     return (
         <div className="mx-auto max-w-3xl space-y-8 p-6">
@@ -131,9 +117,7 @@ export default function InstanceDetail() {
                         <span className="text-sm text-gray-500">
                             Current status:
                         </span>
-                        <span className="inline-flex items-center rounded-md bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800 ring-1 ring-inset ring-blue-600/20">
-                            {instance.currentStatus}
-                        </span>
+                        <Badge tone="info">{instance.currentStatus}</Badge>
                     </div>
                     <div className="flex items-center gap-2">
                         <span className="text-sm text-gray-500">Part:</span>
@@ -247,7 +231,10 @@ export default function InstanceDetail() {
                                         </div>
                                     </dl>
                                 </div>
-                                <ResultBadge result={record.result} />
+                                <StatusBadge
+                                    value={record.result}
+                                    tones={RESULT_TONES}
+                                />
                             </li>
                         ))}
                     </ul>
