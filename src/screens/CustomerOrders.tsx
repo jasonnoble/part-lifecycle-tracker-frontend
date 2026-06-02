@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useId, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../apiClient";
+import { api, apiList } from "../apiClient";
+import type { Part } from "../api/types";
+import { Badge, StatusBadge, type Tone } from "../components/Badge";
 import { getRole } from "../roles";
 
 // ---------------------------------------------------------------------------
@@ -23,13 +25,6 @@ type CustomerOrder = {
     lines: OrderLine[];
     createdAt: string;
     updatedAt: string;
-};
-
-type Part = {
-    id: string;
-    partNumber: string;
-    name: string;
-    status: string;
 };
 
 type SupplierPoLine = {
@@ -79,58 +74,25 @@ function deriveFulfillment(
 // ---------------------------------------------------------------------------
 // Presentational helpers
 // ---------------------------------------------------------------------------
-function orderStatusClasses(status: string): string {
-    switch (status.toUpperCase()) {
-        case "DELIVERED":
-        case "FULFILLED":
-        case "COMPLETE":
-        case "COMPLETED":
-            return "bg-green-100 text-green-800 ring-green-600/20";
-        case "SHIPPED":
-        case "IN_FULFILLMENT":
-            return "bg-blue-100 text-blue-800 ring-blue-600/20";
-        case "OPEN":
-        case "PENDING":
-        case "AWAITING_STOCK":
-        case "BACKORDERED":
-            return "bg-amber-100 text-amber-800 ring-amber-600/20";
-        case "CANCELLED":
-        case "CANCELED":
-            return "bg-red-100 text-red-800 ring-red-600/20";
-        default:
-            return "bg-gray-100 text-gray-700 ring-gray-500/20";
-    }
+// Order status is free-form on the backend; map the common values to tones and
+// fall back to `neutral` for anything unrecognized.
+const ORDER_STATUS_TONES: Record<string, Tone> = {
+    OPEN: "info",
+    SHIPPED: "info",
+    DELIVERED: "success",
+    CANCELLED: "danger",
+};
+
+function OrderStatusBadge({ status }: { status: string }) {
+    return <StatusBadge value={status.toUpperCase()} tones={ORDER_STATUS_TONES} label={status} />;
 }
 
-function StatusBadge({ status }: { status: string }) {
-    return (
-        <span
-            className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${orderStatusClasses(
-                status,
-            )}`}
-        >
-            {status}
-        </span>
-    );
-}
-
-function FulfillmentBadge({
-    fulfillment,
-}: {
-    fulfillment: DerivedFulfillment;
-}) {
+function FulfillmentBadge({ fulfillment }: { fulfillment: DerivedFulfillment }) {
     const inStock = fulfillment === "IN_STOCK";
     return (
-        <span
-            title="Derived from supplier purchase orders — not an authoritative order field."
-            className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
-                inStock
-                    ? "bg-green-100 text-green-800 ring-green-600/20"
-                    : "bg-orange-100 text-orange-800 ring-orange-600/20"
-            }`}
-        >
+        <Badge tone={inStock ? "success" : "warning"}>
             {inStock ? "In stock" : "Pending supplier PO"}
-        </span>
+        </Badge>
     );
 }
 
@@ -149,15 +111,14 @@ function OrderDetail({ orderId }: { orderId: string }) {
     // still renders even if this lookup fails.
     const posQuery = useQuery({
         queryKey: ["supplier-purchase-orders"],
-        queryFn: () =>
-            api<{ data: SupplierPurchaseOrder[] }>("/supplier-purchase-orders"),
+        queryFn: () => apiList<SupplierPurchaseOrder>("/supplier-purchase-orders"),
     });
 
     if (isPending) return <p className="p-4 text-sm text-gray-500">Loading order…</p>;
     if (error)
         return <p className="p-4 text-sm text-red-600">Error: {error.message}</p>;
 
-    const relatedPoLines: SupplierPoLine[] = (posQuery.data?.data ?? [])
+    const relatedPoLines: SupplierPoLine[] = (posQuery.data ?? [])
         .filter((po) => po.customerOrderId === data.id)
         .flatMap((po) => po.lines);
 
@@ -167,7 +128,7 @@ function OrderDetail({ orderId }: { orderId: string }) {
                 <h3 className="text-base font-semibold text-gray-900">
                     Order {data.id}
                 </h3>
-                <StatusBadge status={data.status} />
+                <OrderStatusBadge status={data.status} />
                 <span className="text-sm text-gray-500">{data.customerName}</span>
             </div>
             <table className="w-full text-left text-sm">
@@ -238,18 +199,23 @@ function OrderDetail({ orderId }: { orderId: string }) {
 // New order form
 // ---------------------------------------------------------------------------
 type NewLine = { partNumber: string; quantity: number };
+// A stable per-row key so React reconciles inputs correctly across add/remove;
+// kept separate from the submitted payload shape.
+type DraftLine = NewLine & { key: string };
 type NewOrderPayload = { customerName: string; lines: NewLine[] };
 
 function NewOrderForm({ onClose }: { onClose: () => void }) {
     const queryClient = useQueryClient();
+    const lineKeyPrefix = useId();
     const [customerName, setCustomerName] = useState("");
-    const [lines, setLines] = useState<NewLine[]>([
-        { partNumber: "", quantity: 1 },
+    const [nextLineKey, setNextLineKey] = useState(1);
+    const [lines, setLines] = useState<DraftLine[]>([
+        { key: `${lineKeyPrefix}-0`, partNumber: "", quantity: 1 },
     ]);
 
     const partsQuery = useQuery({
         queryKey: ["parts"],
-        queryFn: () => api<{ data: Part[] }>("/parts"),
+        queryFn: () => apiList<Part>("/parts"),
     });
 
     const createOrder = useMutation({
@@ -271,18 +237,22 @@ function NewOrderForm({ onClose }: { onClose: () => void }) {
     }
 
     function addLine() {
-        setLines((prev) => [...prev, { partNumber: "", quantity: 1 }]);
+        setLines((prev) => [
+            ...prev,
+            { key: `${lineKeyPrefix}-${nextLineKey}`, partNumber: "", quantity: 1 },
+        ]);
+        setNextLineKey((n) => n + 1);
     }
 
     function removeLine(index: number) {
         setLines((prev) => prev.filter((_, i) => i !== index));
     }
 
-    function handleSubmit(e: React.FormEvent) {
+    function handleSubmit(e: FormEvent<HTMLFormElement>) {
         e.preventDefault();
-        const validLines = lines.filter(
-            (l) => l.partNumber && l.quantity >= 1,
-        );
+        const validLines: NewLine[] = lines
+            .filter((l) => l.partNumber && l.quantity >= 1)
+            .map(({ partNumber, quantity }) => ({ partNumber, quantity }));
         if (!customerName.trim() || validLines.length === 0) return;
         createOrder.mutate({
             customerName: customerName.trim(),
@@ -323,7 +293,7 @@ function NewOrderForm({ onClose }: { onClose: () => void }) {
             <div className="flex flex-col gap-3">
                 {lines.map((line, index) => (
                     <div
-                        key={index}
+                        key={line.key}
                         className="flex flex-wrap items-end gap-4"
                     >
                         <label className="flex flex-col text-sm">
@@ -345,7 +315,7 @@ function NewOrderForm({ onClose }: { onClose: () => void }) {
                                         ? "Loading parts…"
                                         : "Select a part…"}
                                 </option>
-                                {partsQuery.data?.data.map((p) => (
+                                {partsQuery.data?.map((p) => (
                                     <option
                                         key={p.id}
                                         value={p.partNumber}
@@ -436,7 +406,7 @@ export default function CustomerOrders() {
 
     const { isPending, error, data } = useQuery({
         queryKey: ["customer-orders"],
-        queryFn: () => api<{ data: CustomerOrder[] }>("/customer-orders"),
+        queryFn: () => apiList<CustomerOrder>("/customer-orders"),
         enabled: allowed,
     });
 
@@ -473,12 +443,12 @@ export default function CustomerOrders() {
 
             {data && (
                 <ul className="divide-y divide-gray-200 overflow-hidden rounded-lg border border-gray-200">
-                    {data.data.length === 0 && (
+                    {data.length === 0 && (
                         <li className="p-4 text-sm text-gray-500">
                             No customer orders yet.
                         </li>
                     )}
-                    {data.data.map((order) => {
+                    {data.map((order) => {
                         const isOpen = selectedId === order.id;
                         return (
                             <li key={order.id}>
@@ -497,7 +467,7 @@ export default function CustomerOrders() {
                                         </span>
                                     </span>
                                     <span className="flex items-center gap-3">
-                                        <StatusBadge status={order.status} />
+                                        <OrderStatusBadge status={order.status} />
                                         <span className="text-xs text-gray-400">
                                             {isOpen ? "▲" : "▼"}
                                         </span>
