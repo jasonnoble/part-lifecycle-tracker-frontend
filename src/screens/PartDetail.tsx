@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "../apiClient";
 import { StatusBadge, type Tone } from "../components/Badge";
@@ -167,7 +167,16 @@ export default function PartDetail() {
        : null;
 
   return (
-    <div className="space-y-6 p-4">
+    <div className="space-y-6">
+      {/* Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="text-sm text-gray-500">
+        <Link to="/parts" className="hover:text-gray-700 hover:underline">
+          Parts
+        </Link>
+        <span className="px-1.5 text-gray-300">/</span>
+        <span className="text-gray-700">{part.partNumber}</span>
+      </nav>
+
       {/* Header */}
       <section>
         <h1 className="text-2xl font-bold">
@@ -199,7 +208,7 @@ export default function PartDetail() {
                     ? `Transition to ${to}`
                     : `Cannot transition from ${part.status} to ${to}`
                 }
-                className="rounded border px-3 py-1.5 text-sm font-medium enabled:hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-md border px-3 py-1.5 text-sm font-medium enabled:border-blue-600 enabled:bg-blue-600 enabled:text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
               >
                 → {to}
               </button>
@@ -273,7 +282,12 @@ export default function PartDetail() {
                     }
                   >
                     <td className="py-1 pr-4">
-                      {line.childPartNumber}
+                      <Link
+                        to={`/parts/${encodeURIComponent(line.childPartNumber)}`}
+                        className="text-blue-600 hover:underline"
+                      >
+                        {line.childPartNumber}
+                      </Link>
                     </td>
                     <td className="py-1 pr-4">
                       {line.childPartName}
@@ -294,12 +308,12 @@ export default function PartDetail() {
         )}
       </section>
 
-      {/* Raw /context */}
-      <section>
+      {/* Raw /context — developer/debug affordance, intentionally low-key */}
+      <section className="border-t border-gray-100 pt-4">
         <button
           type="button"
           onClick={() => setShowContext(true)}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+          className="text-sm font-medium text-gray-500 underline-offset-2 hover:text-gray-700 hover:underline"
         >
           View /context
         </button>

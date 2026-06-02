@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { api, apiList } from "../apiClient";
 import { Badge, StatusBadge, type Tone } from "../components/Badge";
 
@@ -89,11 +89,11 @@ export default function InstanceDetail() {
   );
 
   if (instanceQuery.isPending) {
-    return <p className="p-6 text-gray-500">Loading…</p>;
+    return <p className="text-gray-500">Loading…</p>;
   }
   if (instanceQuery.error) {
     return (
-      <p className="p-6 text-red-600">
+      <p className="text-red-600">
         Error: {instanceQuery.error.message}
       </p>
     );
@@ -104,7 +104,7 @@ export default function InstanceDetail() {
   const testRecords = testsQuery.data ?? [];
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 p-6">
+    <div className="mx-auto max-w-3xl space-y-8">
       <header className="space-y-1">
         <p className="text-sm font-medium uppercase tracking-wide text-gray-500">
           Instance
@@ -121,9 +121,12 @@ export default function InstanceDetail() {
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-500">Part:</span>
-            <span className="font-mono text-sm text-gray-900">
+            <Link
+              to={`/parts/${encodeURIComponent(instance.partNumber)}`}
+              className="font-mono text-sm text-blue-600 hover:underline"
+            >
               {instance.partNumber}
-            </span>
+            </Link>
           </div>
         </div>
       </header>
@@ -142,7 +145,9 @@ export default function InstanceDetail() {
             Error: {eventsQuery.error.message}
           </p>
         ) : events.length === 0 ? (
-          <p className="text-sm text-gray-500">No events recorded.</p>
+          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+            No events recorded.
+          </p>
         ) : (
           <ol
             aria-labelledby="events-heading"
@@ -196,7 +201,9 @@ export default function InstanceDetail() {
             Error: {testsQuery.error.message}
           </p>
         ) : testRecords.length === 0 ? (
-          <p className="text-sm text-gray-500">No test records.</p>
+          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+            No test records.
+          </p>
         ) : (
           <ul aria-labelledby="tests-heading" className="space-y-3">
             {testRecords.map((record) => (
