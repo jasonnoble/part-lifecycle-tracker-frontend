@@ -4,30 +4,36 @@ import { api } from "../apiClient";
 
 type TestResult = "PASS" | "FAIL" | "INCONCLUSIVE";
 
+type Instance = {
+    id: string;
+    serialNumber: string;
+    currentStatus: string;
+    partNumber: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
 type LifecycleEvent = {
     id: string;
-    type: string;
+    eventType: string;
     actor: string;
-    notes?: string | null;
-    occurred_at: string;
-    recorded_at: string;
+    notes: string | null;
+    metadata: unknown;
+    occurredAt: string;
+    recordedAt: string;
 };
 
 type TestRecord = {
     id: string;
+    testType: string;
     result: TestResult;
-    name?: string | null;
-    notes?: string | null;
-    occurred_at?: string | null;
-    recorded_at?: string | null;
+    notes: string | null;
+    conductedBy: string;
+    occurredAt: string;
+    recordedAt: string;
 };
 
-type Instance = {
-    serial: string;
-    status: string;
-    events: LifecycleEvent[];
-    test_records: TestRecord[];
-};
+type ListResponse<T> = { data: T[]; meta: unknown };
 
 const RESULT_STYLES: Record<TestResult, string> = {
     PASS: "bg-green-100 text-green-800 ring-green-600/20",
@@ -62,21 +68,45 @@ function ResultBadge({ result }: { result: TestResult }) {
 export default function InstanceDetail() {
     const { serial } = useParams<{ serial: string }>();
 
-    const { isPending, error, data } = useQuery({
+    const instanceQuery = useQuery({
         queryKey: ["instance", serial],
         queryFn: () => api<Instance>(`/instances/${serial}`),
         enabled: Boolean(serial),
     });
 
-    if (isPending) return <p className="p-6 text-gray-500">Loading…</p>;
-    if (error) return <p className="p-6 text-red-600">Error: {error.message}</p>;
+    const eventsQuery = useQuery({
+        queryKey: ["instance", serial, "events"],
+        queryFn: () =>
+            api<ListResponse<LifecycleEvent>>(`/instances/${serial}/events`),
+        enabled: Boolean(serial),
+    });
 
-    // Sort events by occurred_at ascending regardless of API order.
-    const events = [...(data.events ?? [])].sort(
+    const testsQuery = useQuery({
+        queryKey: ["instance", serial, "tests"],
+        queryFn: () =>
+            api<ListResponse<TestRecord>>(`/instances/${serial}/tests`),
+        enabled: Boolean(serial),
+    });
+
+    if (instanceQuery.isPending) {
+        return <p className="p-6 text-gray-500">Loading…</p>;
+    }
+    if (instanceQuery.error) {
+        return (
+            <p className="p-6 text-red-600">
+                Error: {instanceQuery.error.message}
+            </p>
+        );
+    }
+
+    const instance = instanceQuery.data;
+
+    // Events are returned ordered by occurred_at ASC; re-sort defensively.
+    const events = [...(eventsQuery.data?.data ?? [])].sort(
         (a, b) =>
-            new Date(a.occurred_at).getTime() - new Date(b.occurred_at).getTime(),
+            new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime(),
     );
-    const testRecords = data.test_records ?? [];
+    const testRecords = testsQuery.data?.data ?? [];
 
     return (
         <div className="mx-auto max-w-3xl space-y-8 p-6">
@@ -85,13 +115,23 @@ export default function InstanceDetail() {
                     Instance
                 </p>
                 <h1 className="font-mono text-2xl font-bold text-gray-900">
-                    {data.serial}
+                    {instance.serialNumber}
                 </h1>
-                <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-500">Current status:</span>
-                    <span className="inline-flex items-center rounded-md bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800 ring-1 ring-inset ring-blue-600/20">
-                        {data.status}
-                    </span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500">
+                            Current status:
+                        </span>
+                        <span className="inline-flex items-center rounded-md bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-800 ring-1 ring-inset ring-blue-600/20">
+                            {instance.currentStatus}
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500">Part:</span>
+                        <span className="font-mono text-sm text-gray-900">
+                            {instance.partNumber}
+                        </span>
+                    </div>
                 </div>
             </header>
 
@@ -99,7 +139,13 @@ export default function InstanceDetail() {
                 <h2 className="text-lg font-semibold text-gray-900">
                     Lifecycle Events
                 </h2>
-                {events.length === 0 ? (
+                {eventsQuery.isPending ? (
+                    <p className="text-sm text-gray-500">Loading events…</p>
+                ) : eventsQuery.error ? (
+                    <p className="text-sm text-red-600">
+                        Error: {eventsQuery.error.message}
+                    </p>
+                ) : events.length === 0 ? (
                     <p className="text-sm text-gray-500">No events recorded.</p>
                 ) : (
                     <ol className="relative space-y-6 border-l border-gray-200 pl-6">
@@ -109,7 +155,7 @@ export default function InstanceDetail() {
                                 <div className="space-y-1">
                                     <div className="flex flex-wrap items-center gap-2">
                                         <span className="rounded bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700">
-                                            {event.type}
+                                            {event.eventType}
                                         </span>
                                         <span className="text-sm font-medium text-gray-900">
                                             {event.actor}
@@ -123,11 +169,11 @@ export default function InstanceDetail() {
                                     <dl className="mt-1 flex flex-wrap gap-x-6 gap-y-0.5 text-xs text-gray-500">
                                         <div className="flex gap-1">
                                             <dt className="font-medium">Occurred:</dt>
-                                            <dd>{formatTimestamp(event.occurred_at)}</dd>
+                                            <dd>{formatTimestamp(event.occurredAt)}</dd>
                                         </div>
                                         <div className="flex gap-1">
                                             <dt className="font-medium">Recorded:</dt>
-                                            <dd>{formatTimestamp(event.recorded_at)}</dd>
+                                            <dd>{formatTimestamp(event.recordedAt)}</dd>
                                         </div>
                                     </dl>
                                 </div>
@@ -139,7 +185,13 @@ export default function InstanceDetail() {
 
             <section className="space-y-4">
                 <h2 className="text-lg font-semibold text-gray-900">Test Records</h2>
-                {testRecords.length === 0 ? (
+                {testsQuery.isPending ? (
+                    <p className="text-sm text-gray-500">Loading tests…</p>
+                ) : testsQuery.error ? (
+                    <p className="text-sm text-red-600">
+                        Error: {testsQuery.error.message}
+                    </p>
+                ) : testRecords.length === 0 ? (
                     <p className="text-sm text-gray-500">No test records.</p>
                 ) : (
                     <ul className="space-y-3">
@@ -150,29 +202,30 @@ export default function InstanceDetail() {
                             >
                                 <div className="space-y-1">
                                     <p className="text-sm font-medium text-gray-900">
-                                        {record.name ?? "Test"}
+                                        {record.testType}
+                                    </p>
+                                    <p className="text-xs text-gray-500">
+                                        Conducted by {record.conductedBy}
                                     </p>
                                     {record.notes ? (
                                         <p className="text-sm text-gray-700">
                                             {record.notes}
                                         </p>
                                     ) : null}
-                                    {record.occurred_at || record.recorded_at ? (
-                                        <dl className="flex flex-wrap gap-x-6 gap-y-0.5 text-xs text-gray-500">
-                                            <div className="flex gap-1">
-                                                <dt className="font-medium">Occurred:</dt>
-                                                <dd>
-                                                    {formatTimestamp(record.occurred_at)}
-                                                </dd>
-                                            </div>
-                                            <div className="flex gap-1">
-                                                <dt className="font-medium">Recorded:</dt>
-                                                <dd>
-                                                    {formatTimestamp(record.recorded_at)}
-                                                </dd>
-                                            </div>
-                                        </dl>
-                                    ) : null}
+                                    <dl className="flex flex-wrap gap-x-6 gap-y-0.5 text-xs text-gray-500">
+                                        <div className="flex gap-1">
+                                            <dt className="font-medium">Occurred:</dt>
+                                            <dd>
+                                                {formatTimestamp(record.occurredAt)}
+                                            </dd>
+                                        </div>
+                                        <div className="flex gap-1">
+                                            <dt className="font-medium">Recorded:</dt>
+                                            <dd>
+                                                {formatTimestamp(record.recordedAt)}
+                                            </dd>
+                                        </div>
+                                    </dl>
                                 </div>
                                 <ResultBadge result={record.result} />
                             </li>
