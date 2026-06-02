@@ -124,11 +124,13 @@ function pathOf(url: string) {
 }
 
 function installFetch(handlers: Handlers = {}) {
+  // Match on the path suffix so routes work whether or not VITE_API_BASE_URL
+  // adds a prefix (e.g. "/api/customer-orders" vs "/customer-orders").
   return mockFetchByUrl([
     {
       match: (url, init) =>
         (init?.method ?? "GET").toUpperCase() === "POST" &&
-        pathOf(url) === "/customer-orders",
+        pathOf(url).endsWith("/customer-orders"),
       respond: (_url, init) => {
         lastCreatePayload = init?.body
           ? JSON.parse(init.body as string)
@@ -144,14 +146,14 @@ function installFetch(handlers: Handlers = {}) {
       },
     },
     {
-      match: (url) => pathOf(url) === "/customer-orders",
+      match: (url) => pathOf(url).endsWith("/customer-orders"),
       respond: () =>
         (handlers.listOrders ?? (() => jsonOk({ data: ORDERS })))(),
     },
     {
-      match: (url) => /^\/customer-orders\/.+$/.test(pathOf(url)),
+      match: (url) => /\/customer-orders\/[^/]+$/.test(pathOf(url)),
       respond: (url) => {
-        const id = pathOf(url).replace("/customer-orders/", "");
+        const id = pathOf(url).split("/").pop() ?? "";
         return (
           handlers.getOrder ??
           ((oid: string) => jsonOk(ORDERS.find((o) => o.id === oid)))
@@ -159,12 +161,12 @@ function installFetch(handlers: Handlers = {}) {
       },
     },
     {
-      match: (url) => pathOf(url) === "/parts",
+      match: (url) => pathOf(url).endsWith("/parts"),
       respond: () =>
         (handlers.listParts ?? (() => jsonOk({ data: PARTS })))(),
     },
     {
-      match: (url) => pathOf(url) === "/supplier-purchase-orders",
+      match: (url) => pathOf(url).endsWith("/supplier-purchase-orders"),
       respond: () =>
         (handlers.listSupplierPos ??
           (() => jsonOk({ data: SUPPLIER_POS })))(),
