@@ -21,7 +21,7 @@ export default function Layout() {
             <img
               src="/part-lifecycle-tracker-logo.svg"
               alt=""
-              className="h-8 w-8"
+              className="h-15 w-15"
             />
             <span className="whitespace-nowrap text-base font-semibold tracking-tight text-gray-900">
               Part Lifecycle Tracker
