@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import InstanceDetail from "./InstanceDetail";
@@ -339,12 +339,22 @@ describe("InstanceDetail — recording", () => {
 
     await user.click(await screen.findByRole("button", { name: "Record event" }));
 
-    // Form prefills the actor from the active role (TECH_1 → jamie).
     const form = screen.getByRole("form", { name: "Record lifecycle event" });
     await user.selectOptions(
       within(form).getByLabelText("Event type"),
       "INSPECTED",
     );
+
+    // The actor is prefilled from the active role (TECH_1 → jamie); override it.
+    const actorInput = within(form).getByLabelText("Actor");
+    expect(actorInput).toHaveValue("jamie@factory.com");
+    await user.clear(actorInput);
+    await user.type(actorInput, "quinn@factory.com");
+
+    // occurredAt is a datetime-local input → sent to the server as ISO.
+    fireEvent.change(within(form).getByLabelText("Occurred at"), {
+      target: { value: "2024-05-01T08:30" },
+    });
     await user.type(within(form).getByLabelText("Notes (optional)"), "Looks good");
     await user.click(within(form).getByRole("button", { name: "Record event" }));
 
@@ -357,7 +367,7 @@ describe("InstanceDetail — recording", () => {
       expect(post).toBeDefined();
       const body = JSON.parse((post?.[1] as RequestInit).body as string);
       expect(body.eventType).toBe("INSPECTED");
-      expect(body.actor).toBe("jamie@factory.com");
+      expect(body.actor).toBe("quinn@factory.com");
       expect(body.notes).toBe("Looks good");
       // occurredAt is sent as an ISO timestamp.
       expect(body.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -383,6 +393,16 @@ describe("InstanceDetail — recording", () => {
     const form = screen.getByRole("form", { name: "Add test result" });
     await user.type(within(form).getByLabelText("Test type"), "Pressure test");
     await user.selectOptions(within(form).getByLabelText("Result"), "FAIL");
+
+    const conductedByInput = within(form).getByLabelText("Conducted by");
+    expect(conductedByInput).toHaveValue("jamie@factory.com");
+    await user.clear(conductedByInput);
+    await user.type(conductedByInput, "qa@factory.com");
+
+    fireEvent.change(within(form).getByLabelText("Occurred at"), {
+      target: { value: "2024-05-01T08:30" },
+    });
+    await user.type(within(form).getByLabelText("Notes (optional)"), "n/a");
     await user.click(
       within(form).getByRole("button", { name: "Add test result" }),
     );
@@ -397,9 +417,29 @@ describe("InstanceDetail — recording", () => {
       const body = JSON.parse((post?.[1] as RequestInit).body as string);
       expect(body.testType).toBe("Pressure test");
       expect(body.result).toBe("FAIL");
-      expect(body.conductedBy).toBe("jamie@factory.com");
+      expect(body.conductedBy).toBe("qa@factory.com");
+      expect(body.notes).toBe("n/a");
       expect(body.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
+  });
+
+  it("surfaces a non-ApiError failure (network) when recording", async () => {
+    const user = userEvent.setup();
+    installWriteRouter({
+      onTestPost: () => Promise.reject(new Error("network down")),
+    });
+    renderScreen();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add test result" }),
+    );
+    const form = screen.getByRole("form", { name: "Add test result" });
+    await user.type(within(form).getByLabelText("Test type"), "Smoke test");
+    await user.click(
+      within(form).getByRole("button", { name: "Add test result" }),
+    );
+
+    expect(await screen.findByText("network down")).toBeInTheDocument();
   });
 
   it("surfaces a server error (with code) when recording an event fails", async () => {
