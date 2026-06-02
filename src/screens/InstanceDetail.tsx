@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { api } from "../apiClient";
@@ -88,6 +89,19 @@ export default function InstanceDetail() {
         enabled: Boolean(serial),
     });
 
+    // Events are returned ordered by occurred_at ASC; re-sort defensively.
+    // Memoized above the early returns to keep hook order stable.
+    const eventsData = eventsQuery.data?.data;
+    const events = useMemo(
+        () =>
+            [...(eventsData ?? [])].sort(
+                (a, b) =>
+                    new Date(a.occurredAt).getTime() -
+                    new Date(b.occurredAt).getTime(),
+            ),
+        [eventsData],
+    );
+
     if (instanceQuery.isPending) {
         return <p className="p-6 text-gray-500">Loading…</p>;
     }
@@ -101,11 +115,6 @@ export default function InstanceDetail() {
 
     const instance = instanceQuery.data;
 
-    // Events are returned ordered by occurred_at ASC; re-sort defensively.
-    const events = [...(eventsQuery.data?.data ?? [])].sort(
-        (a, b) =>
-            new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime(),
-    );
     const testRecords = testsQuery.data?.data ?? [];
 
     return (
@@ -135,8 +144,11 @@ export default function InstanceDetail() {
                 </div>
             </header>
 
-            <section className="space-y-4">
-                <h2 className="text-lg font-semibold text-gray-900">
+            <section className="space-y-4" aria-labelledby="events-heading">
+                <h2
+                    id="events-heading"
+                    className="text-lg font-semibold text-gray-900"
+                >
                     Lifecycle Events
                 </h2>
                 {eventsQuery.isPending ? (
@@ -148,7 +160,10 @@ export default function InstanceDetail() {
                 ) : events.length === 0 ? (
                     <p className="text-sm text-gray-500">No events recorded.</p>
                 ) : (
-                    <ol className="relative space-y-6 border-l border-gray-200 pl-6">
+                    <ol
+                        aria-labelledby="events-heading"
+                        className="relative space-y-6 border-l border-gray-200 pl-6"
+                    >
                         {events.map((event) => (
                             <li key={event.id} className="relative">
                                 <span className="absolute -left-[1.6875rem] top-1.5 h-3 w-3 rounded-full border-2 border-white bg-blue-500" />
@@ -183,8 +198,13 @@ export default function InstanceDetail() {
                 )}
             </section>
 
-            <section className="space-y-4">
-                <h2 className="text-lg font-semibold text-gray-900">Test Records</h2>
+            <section className="space-y-4" aria-labelledby="tests-heading">
+                <h2
+                    id="tests-heading"
+                    className="text-lg font-semibold text-gray-900"
+                >
+                    Test Records
+                </h2>
                 {testsQuery.isPending ? (
                     <p className="text-sm text-gray-500">Loading tests…</p>
                 ) : testsQuery.error ? (
@@ -194,7 +214,7 @@ export default function InstanceDetail() {
                 ) : testRecords.length === 0 ? (
                     <p className="text-sm text-gray-500">No test records.</p>
                 ) : (
-                    <ul className="space-y-3">
+                    <ul aria-labelledby="tests-heading" className="space-y-3">
                         {testRecords.map((record) => (
                             <li
                                 key={record.id}
