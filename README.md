@@ -51,6 +51,29 @@ In dev, the app calls relative `/api/*` paths. `vite.config.ts` proxies those to
 | `npm run build` | Type-check (`tsc -b`) then production build to `dist/` |
 | `npm run lint` | ESLint over the repo |
 | `npm run preview` | Serve the production build locally |
+| `npm test` | Run the Vitest suite once |
+| `npm run test:watch` | Vitest in watch mode |
+| `npm run test:coverage` | Run tests with v8 coverage (enforces the global floor) |
+| `npm run coverage:diff` | Diff-coverage gate on changed lines (needs `diff-cover`, see below) |
+
+## Testing
+
+Vitest + React Testing Library (jsdom). Two coverage gates run in CI on every PR:
+
+1. **Global floor** — `npm run test:coverage` fails if overall coverage drops
+   below the threshold in `vite.config.ts` (`coverage.thresholds`).
+2. **Per-PR diff gate** — changed lines must be ≥ 90% covered, so no PR merges
+   code its own diff didn't cover. CI runs [`diff-cover`](https://github.com/Bachmann1234/diff_cover)
+   against the `lcov` report and the base branch.
+
+To run the diff gate locally (requires Python; install once with
+`pipx install diff-cover`):
+
+```bash
+git fetch origin main
+npm run test:coverage      # writes coverage/lcov.info
+npm run coverage:diff      # diff-cover vs origin/main, --fail-under=90
+```
 
 ## Deploy
 

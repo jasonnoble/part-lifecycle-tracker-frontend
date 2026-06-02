@@ -10,12 +10,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the diff-coverage gate can diff against the base branch.
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: "26"
           cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
 
       - name: Install dependencies
         run: npm ci
@@ -28,3 +36,15 @@ jobs:
 
       - name: Test with coverage
         run: npm run test:coverage
+
+      # Per-PR diff-coverage gate (JAS-65): changed lines must clear the
+      # threshold, so no PR merges code its own diff didn't cover. Stricter
+      # than the global floor in vite.config.ts since it only judges new code.
+      - name: Diff coverage gate
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+          pip install diff-cover
+          diff-cover coverage/lcov.info \
+            --compare-branch "origin/$GITHUB_BASE_REF" \
+            --fail-under=90

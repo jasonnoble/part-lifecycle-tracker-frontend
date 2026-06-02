@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "coverage:diff": "diff-cover coverage/lcov.info --compare-branch origin/main --fail-under=90"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.0",
