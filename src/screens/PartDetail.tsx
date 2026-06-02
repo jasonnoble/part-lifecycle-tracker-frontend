@@ -280,12 +280,12 @@ export default function PartDetail() {
                         </thead>
                         <tbody>
                             {bomLines.map((line) => {
-                                const deleted = Boolean(line.deletedAt);
+                                const { deletedAt } = line;
                                 return (
                                     <tr
                                         key={line.id}
                                         className={
-                                            deleted
+                                            deletedAt
                                                 ? "text-gray-400 line-through"
                                                 : ""
                                         }
@@ -300,10 +300,8 @@ export default function PartDetail() {
                                             {line.quantity}
                                         </td>
                                         <td className="py-1 pr-4 no-underline">
-                                            {deleted
-                                                ? formatDate(
-                                                      line.deletedAt as string,
-                                                  )
+                                            {deletedAt
+                                                ? formatDate(deletedAt)
                                                 : "—"}
                                         </td>
                                     </tr>
