@@ -40,22 +40,31 @@ describe("Layout", () => {
     expect(screen.getAllByRole("option")).toHaveLength(6);
   });
 
-  it("hides the Sales tab for roles that cannot view it (default TECH_1)", () => {
+  it("shows the Sales tab as disabled (not a link) with a role tooltip for a disallowed role (TECH_1)", () => {
     renderLayout();
 
+    // Not navigable…
     expect(
       screen.queryByRole("link", { name: "Sales" }),
     ).not.toBeInTheDocument();
+
+    // …but still visible, marked disabled, and explains which roles are needed.
+    const sales = screen.getByText("Sales");
+    expect(sales).toHaveAttribute("aria-disabled", "true");
+    expect(sales).toHaveAttribute(
+      "title",
+      "Requires the Salesperson or Site Manager role",
+    );
   });
 
-  it("shows the Sales tab for a sales-permitted role", () => {
+  it("shows the Sales tab as a real link for a sales-permitted role", () => {
     setRole("SALESPERSON");
     renderLayout();
 
     expect(screen.getByRole("link", { name: "Sales" })).toBeInTheDocument();
   });
 
-  it("reveals the Sales tab when the role is switched to a permitted one", async () => {
+  it("enables the Sales tab when the role is switched to a permitted one", async () => {
     const user = userEvent.setup();
     renderLayout();
 
@@ -63,8 +72,8 @@ describe("Layout", () => {
       screen.queryByRole("link", { name: "Sales" }),
     ).not.toBeInTheDocument();
 
-    // Switching role in the selector should re-render the shell and surface
-    // the Sales tab without a navigation.
+    // Switching role in the selector should re-render the shell and turn the
+    // disabled Sales tab into a real link without a navigation.
     await user.selectOptions(screen.getByRole("combobox"), "SITE_MANAGER");
 
     expect(screen.getByRole("link", { name: "Sales" })).toBeInTheDocument();

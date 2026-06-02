@@ -1,7 +1,37 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import RoleSelector from "./RoleSelector.tsx";
-import { canViewSales, getRole, type RoleKey } from "./roles.ts";
+import {
+  ROLES,
+  SALES_ROLES,
+  canViewSales,
+  getRole,
+  type RoleKey,
+} from "./roles.ts";
+
+// Human-readable list of the roles that may use Sales, e.g.
+// "Salesperson or Site Manager" — used in the disabled tab's tooltip.
+const SALES_ROLE_LABELS = SALES_ROLES.map(
+  (key) => ROLES.find((r) => r.key === key)?.label ?? key,
+).join(" or ");
+
+// Small lock glyph shown on a restricted (disabled) nav tab.
+function LockIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      aria-hidden="true"
+      className="h-3.5 w-3.5"
+    >
+      <path
+        fillRule="evenodd"
+        d="M10 1a4.5 4.5 0 00-4.5 4.5V9H5a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2h-.5V5.5A4.5 4.5 0 0010 1zm3 8V5.5a3 3 0 10-6 0V9h6z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
 
 // Nav link styling. The active route gets a stronger color + an underline rule
 // so there's a clear "you are here" indicator (NavLink toggles `isActive`).
@@ -42,10 +72,20 @@ export default function Layout() {
             <NavLink to="/parts" className={navLinkClass}>
               Parts
             </NavLink>
-            {showSales && (
+            {showSales ? (
               <NavLink to="/sales" className={navLinkClass}>
                 Sales
               </NavLink>
+            ) : (
+              <span
+                aria-disabled="true"
+                tabIndex={0}
+                title={`Requires the ${SALES_ROLE_LABELS} role`}
+                className="flex cursor-not-allowed items-center gap-1 border-b-2 border-transparent pb-0.5 text-sm font-medium text-gray-300"
+              >
+                Sales
+                <LockIcon />
+              </span>
             )}
           </nav>
         </div>
