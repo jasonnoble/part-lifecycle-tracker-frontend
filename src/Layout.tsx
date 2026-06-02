@@ -17,9 +17,16 @@ export default function Layout() {
     <>
       <header className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-gray-200 bg-white px-6 py-3">
         <div className="flex flex-wrap items-center gap-x-8 gap-y-2">
-          <span className="whitespace-nowrap text-base font-semibold tracking-tight text-gray-900">
-            Part Lifecycle Tracker
-          </span>
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/part-lifecycle-tracker-logo.svg"
+              alt=""
+              className="h-8 w-8"
+            />
+            <span className="whitespace-nowrap text-base font-semibold tracking-tight text-gray-900">
+              Part Lifecycle Tracker
+            </span>
+          </div>
           <nav className="flex items-center gap-6">
             {/* `end` keeps the index link from matching every nested route. */}
             <NavLink to="/" end className={navLinkClass}>
