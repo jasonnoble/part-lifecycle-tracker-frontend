@@ -1,51 +1,122 @@
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../apiClient";
-import { getRole, ROLES, type RoleKey } from "../roles";
+import { api, ApiError } from "../apiClient";
+import { getRole, type RoleKey } from "../roles";
 
 // ---------------------------------------------------------------------------
-// Types (documented assumed API shapes — see PR body)
+// Types (real backend contract — camelCase, hyphenated routes)
 // ---------------------------------------------------------------------------
-type StepStatus =
-    | "PENDING"
-    | "INSTALLED"
-    | "VALIDATED"
-    | "CERTIFIED"
-    | "BLOCKED";
+// Server step status enum. NOTE: per the API spec the authoritative enum is
+// PENDING | INSTALLED | VALIDATED | CERTIFIED and "BLOCKED" is a DERIVED UI
+// concept (see deriveBlocked below). The live backend currently also emits a
+// "BLOCKED" string for steps whose prerequisite isn't certified yet, so we
+// accept it defensively but never rely on it — we derive blocking ourselves.
+type ServerStepStatus = "PENDING" | "INSTALLED" | "VALIDATED" | "CERTIFIED";
 
 type WorkOrderStep = {
     id: string;
-    part_number: string;
-    name: string;
-    status: StepStatus;
-    blocked_reason?: string;
-    blocking_part_name?: string;
-    installed_by?: string;
-    validated_by?: string;
+    bomItemId: string;
+    status: ServerStepStatus | "BLOCKED";
+    installedPartInstanceId: string | null;
+    installedActor: string | null;
+    validatedActor: string | null;
+    certifiedActor: string | null;
+    childPartNumber: string;
+    childPartName: string;
+    installedAt: string | null;
+    validatedAt: string | null;
+    certifiedAt: string | null;
 };
 
 type WorkOrder = {
     id: string;
-    reference?: string;
     status: string;
+    customerOrderLineId: string | null;
+    partNumber: string;
+    serialNumber: string;
     steps: WorkOrderStep[];
+    createdAt: string;
+    updatedAt: string;
 };
 
-// The list endpoint uses the pagy-style envelope ({ data, meta }).
-type WorkOrderListResponse = { data: WorkOrder[] };
+// List responses use the pagy-style envelope ({ data, meta }).
+type WorkOrderListResponse = { data: WorkOrder[]; meta?: unknown };
+
+// BOM item dependency graph (from GET /parts/{partNumber}/bom). Used to derive
+// which PENDING steps are blocked by an uncertified prerequisite.
+type BomDependency = {
+    prerequisiteBomItemId: string;
+    prerequisitePartNumber: string;
+};
+type BomItem = {
+    id: string;
+    quantity: number;
+    childPartNumber: string;
+    childPartName: string;
+    deletedAt: string | null;
+    dependencies: BomDependency[];
+};
+type BomResponse = { data: BomItem[] };
 
 // ---------------------------------------------------------------------------
-// Role -> action mapping
-//   PENDING   -> Install   (TECH_1 / Installer)
-//   INSTALLED -> Validate  (TECH_2 / Validator)  [4-eyes: not the installer]
-//   VALIDATED -> Certify   (QA)
+// Role -> actor email mapping
+//   The `actor` field is an EMAIL, not a role key or person name.
+//   Known from the spec examples:
+//     TECH_1 -> jamie@factory.com (installer)
+//     TECH_2 -> riley@factory.com (validator)
+//     QA     -> quinn@factory.com (certifier; has the QA role server-side)
+//   Other roles are best-guess derived emails (they can't perform step
+//   actions anyway, but we provide a stable value).
+// ---------------------------------------------------------------------------
+const ROLE_ACTOR_EMAIL: Record<RoleKey, string> = {
+    TECH_1: "jamie@factory.com",
+    TECH_2: "riley@factory.com",
+    QA: "quinn@factory.com",
+    // best-guess (not used for install/validate/certify):
+    SALESPERSON: "sarah@factory.com",
+    FLOOR_MANAGER: "marcus@factory.com",
+    SITE_MANAGER: "alex@factory.com",
+};
+
+function actorEmailForRole(role: RoleKey): string {
+    return ROLE_ACTOR_EMAIL[role];
+}
+
+// ---------------------------------------------------------------------------
+// Derived "blocked" state
+//   A PENDING step is blocked when one of its BOM dependencies
+//   (prerequisiteBomItemId) maps to a step that is not yet CERTIFIED.
+//   The blocking part name is that prerequisite step's childPartName.
+// ---------------------------------------------------------------------------
+type Blocked = { blocked: true; blockingPartName: string };
+
+function deriveBlocked(
+    step: WorkOrderStep,
+    steps: WorkOrderStep[],
+    bomItems: BomItem[],
+): Blocked | null {
+    // Only PENDING steps can be (un)blocked; once installed it's moot.
+    if (step.status !== "PENDING" && step.status !== "BLOCKED") return null;
+
+    const bomItem = bomItems.find((b) => b.id === step.bomItemId);
+    if (!bomItem || bomItem.dependencies.length === 0) return null;
+
+    for (const dep of bomItem.dependencies) {
+        const prereqStep = steps.find((s) => s.bomItemId === dep.prerequisiteBomItemId);
+        if (prereqStep && prereqStep.status !== "CERTIFIED") {
+            return {
+                blocked: true,
+                blockingPartName: prereqStep.childPartName,
+            };
+        }
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+// Step actions
 // ---------------------------------------------------------------------------
 type Action = "install" | "validate" | "certify";
-
-const ACTION_ROLE: Record<Action, RoleKey> = {
-    install: "TECH_1",
-    validate: "TECH_2",
-    certify: "QA",
-};
 
 const ACTION_LABEL: Record<Action, string> = {
     install: "Install",
@@ -53,8 +124,8 @@ const ACTION_LABEL: Record<Action, string> = {
     certify: "Certify",
 };
 
-// The action that advances a step from its current status.
-function actionForStatus(status: StepStatus): Action | null {
+// The action that advances a step from its current (server) status.
+function actionForStatus(status: WorkOrderStep["status"]): Action | null {
     switch (status) {
         case "PENDING":
             return "install";
@@ -63,18 +134,14 @@ function actionForStatus(status: StepStatus): Action | null {
         case "VALIDATED":
             return "certify";
         default:
-            return null; // CERTIFIED / BLOCKED have no advancing action
+            return null; // CERTIFIED / BLOCKED have no directly-advancing action
     }
-}
-
-function personForRole(role: RoleKey): string {
-    return ROLES.find((r) => r.key === role)?.person ?? role;
 }
 
 // ---------------------------------------------------------------------------
 // Status pill styling
 // ---------------------------------------------------------------------------
-const STATUS_STYLES: Record<StepStatus, string> = {
+const STATUS_STYLES: Record<string, string> = {
     PENDING: "bg-gray-100 text-gray-700 ring-gray-300",
     INSTALLED: "bg-blue-100 text-blue-800 ring-blue-300",
     VALIDATED: "bg-amber-100 text-amber-800 ring-amber-300",
@@ -82,10 +149,10 @@ const STATUS_STYLES: Record<StepStatus, string> = {
     BLOCKED: "bg-red-100 text-red-800 ring-red-300",
 };
 
-function StatusPill({ status }: { status: StepStatus }) {
+function StatusPill({ status }: { status: string }) {
     return (
         <span
-            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ring-1 ring-inset ${STATUS_STYLES[status]}`}
+            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ring-1 ring-inset ${STATUS_STYLES[status] ?? STATUS_STYLES.PENDING}`}
         >
             {status}
         </span>
@@ -98,33 +165,93 @@ function StatusPill({ status }: { status: StepStatus }) {
 export default function WorkOrder() {
     const queryClient = useQueryClient();
     const currentRole = getRole();
-    const currentPerson = personForRole(currentRole);
+    const actorEmail = actorEmailForRole(currentRole);
 
-    // No id in the route (this is the index/home tab) so fetch the active /
-    // first work order from the collection endpoint.
+    // No id in the route (this is the index / Assembly Line tab), so fetch the
+    // OPEN work orders and treat the first one as the active work order.
     const { isPending, error, data } = useQuery({
-        queryKey: ["work_orders"],
-        queryFn: () => api<WorkOrderListResponse>("/work_orders"),
+        queryKey: ["work-orders"],
+        queryFn: () => api<WorkOrderListResponse>("/work-orders?status=OPEN"),
     });
 
     const workOrder = data?.data?.[0];
 
+    // Fetch the parent part's BOM so we can derive blocked steps. Enabled only
+    // once we know the work order's partNumber.
+    const { data: bomData } = useQuery({
+        queryKey: ["bom", workOrder?.partNumber],
+        queryFn: () => api<BomResponse>(`/parts/${workOrder!.partNumber}/bom`),
+        enabled: !!workOrder?.partNumber,
+    });
+    const bomItems = bomData?.data ?? [];
+
+    // installedSerial input state, keyed by step id.
+    const [serials, setSerials] = useState<Record<string, string>>({});
+    // Inline error message, keyed by step id (or "complete").
+    const [errors, setErrors] = useState<Record<string, string>>({});
+
+    function setStepError(key: string, message: string | null) {
+        setErrors((prev) => {
+            const next = { ...prev };
+            if (message) next[key] = message;
+            else delete next[key];
+            return next;
+        });
+    }
+
     const stepMutation = useMutation({
-        mutationFn: ({ stepId, action }: { stepId: string; action: Action }) =>
-            api(`/work_orders/${workOrder!.id}/steps/${stepId}/${action}`, {
-                method: "POST",
-            }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["work_orders"] }),
+        mutationFn: ({
+            stepId,
+            action,
+            body,
+        }: {
+            stepId: string;
+            action: Action;
+            body: Record<string, unknown>;
+        }) =>
+            api<WorkOrder>(
+                `/work-orders/${workOrder!.id}/steps/${stepId}/${action}`,
+                { method: "POST", body: JSON.stringify(body) },
+            ),
+        onSuccess: (_data, vars) => {
+            setStepError(vars.stepId, null);
+            queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+        },
+        onError: (err: unknown, vars) => {
+            const message =
+                err instanceof ApiError
+                    ? `${err.code ? `[${err.code}] ` : ""}${err.message}`
+                    : err instanceof Error
+                      ? err.message
+                      : "Request failed";
+            setStepError(vars.stepId, message);
+        },
     });
 
     const completeMutation = useMutation({
         mutationFn: () =>
-            api(`/work_orders/${workOrder!.id}/complete`, { method: "POST" }),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ["work_orders"] }),
+            api<WorkOrder>(`/work-orders/${workOrder!.id}/complete`, {
+                method: "POST",
+                body: JSON.stringify({}),
+            }),
+        onSuccess: () => {
+            setStepError("complete", null);
+            queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+        },
+        onError: (err: unknown) => {
+            const message =
+                err instanceof ApiError
+                    ? `${err.code ? `[${err.code}] ` : ""}${err.message}`
+                    : err instanceof Error
+                      ? err.message
+                      : "Request failed";
+            setStepError("complete", message);
+        },
     });
 
     if (isPending) return <p className="p-4">Loading…</p>;
-    if (error) return <p className="p-4 text-red-600">Error: {error.message}</p>;
+    if (error)
+        return <p className="p-4 text-red-600">Error: {error.message}</p>;
     if (!workOrder)
         return <p className="p-4 text-gray-600">No active work order.</p>;
 
@@ -132,14 +259,32 @@ export default function WorkOrder() {
     const allCertified =
         steps.length > 0 && steps.every((s) => s.status === "CERTIFIED");
 
+    function runAction(step: WorkOrderStep, action: Action) {
+        const body: Record<string, unknown> = { actor: actorEmail };
+        if (action === "install") {
+            const installedSerial = (serials[step.id] ?? "").trim();
+            if (!installedSerial) {
+                setStepError(step.id, "Enter the serial number to install.");
+                return;
+            }
+            body.installedSerial = installedSerial;
+        }
+        stepMutation.mutate({ stepId: step.id, action, body });
+    }
+
     return (
         <section className="mx-auto max-w-3xl p-4">
             <div className="mb-4 flex items-baseline justify-between">
-                <h1 className="text-2xl font-bold text-gray-900">
-                    Work Order {workOrder.reference ?? workOrder.id}
-                </h1>
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900">
+                        Work Order {workOrder.serialNumber}
+                    </h1>
+                    <p className="text-sm text-gray-500">
+                        {workOrder.partNumber} · {workOrder.status}
+                    </p>
+                </div>
                 <span className="text-sm text-gray-500">
-                    Acting as {currentPerson}
+                    Acting as {actorEmail}
                 </span>
             </div>
 
@@ -148,29 +293,41 @@ export default function WorkOrder() {
                     <StepRow
                         key={step.id}
                         step={step}
+                        blocked={deriveBlocked(step, steps, bomItems)}
                         currentRole={currentRole}
-                        currentPerson={currentPerson}
-                        pending={stepMutation.isPending}
-                        onAction={(action) =>
-                            stepMutation.mutate({ stepId: step.id, action })
+                        actorEmail={actorEmail}
+                        serial={serials[step.id] ?? ""}
+                        onSerialChange={(v) =>
+                            setSerials((prev) => ({ ...prev, [step.id]: v }))
                         }
+                        error={errors[step.id]}
+                        pending={
+                            stepMutation.isPending &&
+                            stepMutation.variables?.stepId === step.id
+                        }
+                        onAction={(action) => runAction(step, action)}
                     />
                 ))}
             </ul>
 
-            <div className="mt-6 flex items-center gap-3">
-                <button
-                    type="button"
-                    disabled={!allCertified || completeMutation.isPending}
-                    onClick={() => completeMutation.mutate()}
-                    className="rounded-md bg-green-600 px-4 py-2 font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
-                >
-                    Complete work order
-                </button>
-                {!allCertified && (
-                    <span className="text-sm text-gray-500">
-                        All steps must be CERTIFIED to complete.
-                    </span>
+            <div className="mt-6 flex flex-col gap-2">
+                <div className="flex items-center gap-3">
+                    <button
+                        type="button"
+                        disabled={!allCertified || completeMutation.isPending}
+                        onClick={() => completeMutation.mutate()}
+                        className="rounded-md bg-green-600 px-4 py-2 font-semibold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:bg-gray-300 disabled:text-gray-500"
+                    >
+                        Complete work order
+                    </button>
+                    {!allCertified && (
+                        <span className="text-sm text-gray-500">
+                            All steps must be CERTIFIED to complete.
+                        </span>
+                    )}
+                </div>
+                {errors.complete && (
+                    <p className="text-sm text-red-600">{errors.complete}</p>
                 )}
             </div>
         </section>
@@ -182,76 +339,109 @@ export default function WorkOrder() {
 // ---------------------------------------------------------------------------
 function StepRow({
     step,
+    blocked,
     currentRole,
-    currentPerson,
+    actorEmail,
+    serial,
+    onSerialChange,
+    error,
     pending,
     onAction,
 }: {
     step: WorkOrderStep;
+    blocked: Blocked | null;
     currentRole: RoleKey;
-    currentPerson: string;
+    actorEmail: string;
+    serial: string;
+    onSerialChange: (value: string) => void;
+    error?: string;
     pending: boolean;
     onAction: (action: Action) => void;
 }) {
     const action = actionForStatus(step.status);
+    const isBlocked = !!blocked;
 
-    // Whether the current role is the one allowed to perform this action.
-    const roleAllowed = action != null && ACTION_ROLE[action] === currentRole;
-
-    // 4-eyes: the installer of a step cannot also validate it.
+    // 4-eyes: the installer of a step cannot also validate it. The server
+    // enforces this too; we mirror it in the UI by disabling Validate.
     const fourEyesViolation =
-        action === "validate" && step.installed_by === currentPerson;
+        action === "validate" && step.installedActor === actorEmail;
 
-    const canAct = roleAllowed && !fourEyesViolation && !pending;
+    // Certify is QA-only.
+    const certifyNotQa = action === "certify" && currentRole !== "QA";
+
+    const canAct =
+        action != null &&
+        !isBlocked &&
+        !fourEyesViolation &&
+        !certifyNotQa &&
+        !pending;
+
+    // Display status: show derived BLOCKED for a blocked pending step.
+    const displayStatus = isBlocked ? "BLOCKED" : step.status;
+
+    let actionTitle: string | undefined;
+    if (isBlocked)
+        actionTitle = `Blocked by ${blocked.blockingPartName} (must be CERTIFIED first)`;
+    else if (fourEyesViolation)
+        actionTitle = "4-eyes: you installed this step and cannot validate it";
+    else if (certifyNotQa) actionTitle = "Certify requires the QA role";
 
     return (
-        <li className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 p-3">
-            <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-gray-500">
-                        {step.part_number}
-                    </span>
-                    <span className="font-medium text-gray-900">{step.name}</span>
+        <li className="rounded-lg border border-gray-200 p-3">
+            <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm text-gray-500">
+                            {step.childPartNumber}
+                        </span>
+                        <span className="font-medium text-gray-900">
+                            {step.childPartName}
+                        </span>
+                    </div>
+                    {isBlocked && (
+                        <p className="mt-1 text-sm text-red-600">
+                            Blocked by {blocked.blockingPartName} (must be
+                            certified first)
+                        </p>
+                    )}
+                    {step.installedActor && (
+                        <p className="mt-0.5 text-xs text-gray-400">
+                            Installed by {step.installedActor}
+                            {step.validatedActor
+                                ? ` · Validated by ${step.validatedActor}`
+                                : ""}
+                            {step.certifiedActor
+                                ? ` · Certified by ${step.certifiedActor}`
+                                : ""}
+                        </p>
+                    )}
                 </div>
-                {step.status === "BLOCKED" && (
-                    <p className="mt-1 text-sm text-red-600">
-                        Blocked
-                        {step.blocking_part_name
-                            ? ` by ${step.blocking_part_name}`
-                            : ""}
-                        {step.blocked_reason ? `: ${step.blocked_reason}` : ""}
-                    </p>
-                )}
-                {step.installed_by && (
-                    <p className="mt-0.5 text-xs text-gray-400">
-                        Installed by {step.installed_by}
-                        {step.validated_by
-                            ? ` · Validated by ${step.validated_by}`
-                            : ""}
-                    </p>
-                )}
-            </div>
 
-            <div className="flex shrink-0 items-center gap-3">
-                <StatusPill status={step.status} />
-                {action && (
-                    <button
-                        type="button"
-                        disabled={!canAct}
-                        onClick={() => onAction(action)}
-                        title={
-                            fourEyesViolation
-                                ? "4-eyes: you installed this step and cannot validate it"
-                                : !roleAllowed
-                                  ? `Requires ${ACTION_ROLE[action]} role`
-                                  : undefined
-                        }
-                        className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400"
-                    >
-                        {ACTION_LABEL[action]}
-                    </button>
-                )}
+                <div className="flex shrink-0 items-center gap-3">
+                    <StatusPill status={displayStatus} />
+                    {action === "install" && !isBlocked && (
+                        <input
+                            type="text"
+                            value={serial}
+                            onChange={(e) => onSerialChange(e.target.value)}
+                            placeholder="Serial #"
+                            className="w-36 rounded-md border border-gray-300 px-2 py-1 text-sm"
+                        />
+                    )}
+                    {action && (
+                        <button
+                            type="button"
+                            disabled={!canAct}
+                            onClick={() => onAction(action)}
+                            title={actionTitle}
+                            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400"
+                        >
+                            {ACTION_LABEL[action]}
+                        </button>
+                    )}
+                </div>
             </div>
+            {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </li>
     );
 }
