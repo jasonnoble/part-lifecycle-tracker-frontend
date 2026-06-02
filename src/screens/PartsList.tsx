@@ -1,39 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
-import { api } from "../apiClient";
+import { api, apiList } from "../apiClient";
+import type { Part } from "../api/types";
+import { StatusBadge, type Tone } from "../components/Badge";
 
-type Part = {
-    id: string;
-    partNumber: string;
-    name: string;
-    description: string;
-    revision: string | null;
-    status: string;
-    createdAt: string;
-    updatedAt: string;
+const STATUS_TONES: Record<string, Tone> = {
+    DRAFT: "warning",
+    RELEASED: "success",
+    OBSOLETE: "neutral",
 };
-
-type PartsEnvelope = { data: Part[]; meta?: unknown };
-
-const STATUS_STYLES: Record<string, string> = {
-    DRAFT: "bg-amber-100 text-amber-800 ring-amber-600/20",
-    RELEASED: "bg-green-100 text-green-800 ring-green-600/20",
-    OBSOLETE: "bg-gray-200 text-gray-700 ring-gray-500/20",
-};
-
-function StatusBadge({ status }: { status: string }) {
-    const style =
-        STATUS_STYLES[status?.toUpperCase()] ??
-        "bg-blue-100 text-blue-800 ring-blue-600/20";
-    return (
-        <span
-            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${style}`}
-        >
-            {status}
-        </span>
-    );
-}
 
 /** Debounce a fast-changing value (e.g. a search box) by `delay` ms. */
 function useDebounced<T>(value: T, delay = 250): T {
@@ -46,14 +22,14 @@ function useDebounced<T>(value: T, delay = 250): T {
 }
 
 type NewPartForm = {
-    part_number: string;
+    partNumber: string;
     name: string;
     description: string;
     revision: string;
 };
 
 const EMPTY_FORM: NewPartForm = {
-    part_number: "",
+    partNumber: "",
     name: "",
     description: "",
     revision: "",
@@ -68,8 +44,9 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
         mutationFn: (body: NewPartForm) =>
             api<Part>("/parts", {
                 method: "POST",
+                // The backend contract is snake_case; map at the API boundary.
                 body: JSON.stringify({
-                    part_number: body.part_number.trim(),
+                    part_number: body.partNumber.trim(),
                     name: body.name.trim(),
                     description: body.description.trim(),
                     revision: body.revision.trim(),
@@ -83,7 +60,7 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
 
     function validate(): boolean {
         const next: Partial<Record<keyof NewPartForm, string>> = {};
-        if (!form.part_number.trim()) next.part_number = "Part number is required.";
+        if (!form.partNumber.trim()) next.partNumber = "Part number is required.";
         if (!form.name.trim()) next.name = "Name is required.";
         if (!form.description.trim()) next.description = "Description is required.";
         if (!form.revision.trim()) next.revision = "Revision is required.";
@@ -91,7 +68,7 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
         return Object.keys(next).length === 0;
     }
 
-    function handleSubmit(e: React.FormEvent) {
+    function handleSubmit(e: FormEvent<HTMLFormElement>) {
         e.preventDefault();
         if (!validate()) return;
         mutation.mutate(form);
@@ -115,12 +92,14 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
                     </label>
                     <input
                         type="text"
-                        value={form.part_number}
-                        onChange={(e) => update("part_number", e.target.value)}
+                        value={form.partNumber}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            update("partNumber", e.target.value)
+                        }
                         className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
-                    {errors.part_number && (
-                        <p className="mt-1 text-xs text-red-600">{errors.part_number}</p>
+                    {errors.partNumber && (
+                        <p className="mt-1 text-xs text-red-600">{errors.partNumber}</p>
                     )}
                 </div>
 
@@ -131,7 +110,9 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
                     <input
                         type="text"
                         value={form.name}
-                        onChange={(e) => update("name", e.target.value)}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            update("name", e.target.value)
+                        }
                         className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                     {errors.name && (
@@ -145,7 +126,9 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
                     </label>
                     <textarea
                         value={form.description}
-                        onChange={(e) => update("description", e.target.value)}
+                        onChange={(e: ChangeEvent<HTMLTextAreaElement>) =>
+                            update("description", e.target.value)
+                        }
                         rows={3}
                         className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
@@ -161,7 +144,9 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
                     <input
                         type="text"
                         value={form.revision}
-                        onChange={(e) => update("revision", e.target.value)}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            update("revision", e.target.value)
+                        }
                         className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
                     {errors.revision && (
@@ -169,9 +154,9 @@ function CreatePartForm({ onClose }: { onClose: () => void }) {
                     )}
                 </div>
 
-                {mutation.isError && (
-                    <p className="text-sm text-red-600">
-                        Could not create part: {(mutation.error as Error).message}
+                {mutation.error && (
+                    <p role="alert" className="text-sm text-red-600">
+                        Could not create part: {mutation.error.message}
                     </p>
                 )}
 
@@ -209,11 +194,11 @@ export default function PartsList() {
         queryFn: () => {
             const q = debouncedSearch.trim();
             const qs = q ? `?search=${encodeURIComponent(q)}` : "";
-            return api<PartsEnvelope>(`/parts${qs}`);
+            return apiList<Part>(`/parts${qs}`);
         },
     });
 
-    const parts = data?.data ?? [];
+    const parts = data ?? [];
 
     return (
         <div className="p-6">
@@ -231,14 +216,17 @@ export default function PartsList() {
             <input
                 type="search"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+                aria-label="Search parts"
                 placeholder="Search by name or part number…"
                 className="mb-4 w-full max-w-sm rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
             />
 
             {isPending && <p className="text-gray-500">Loading…</p>}
             {error && (
-                <p className="text-red-600">Error: {(error as Error).message}</p>
+                <p role="alert" className="text-red-600">
+                    Error: {error.message}
+                </p>
             )}
 
             {!isPending && !error && (
@@ -289,7 +277,7 @@ export default function PartsList() {
                                         {p.revision ?? "—"}
                                     </td>
                                     <td className="px-4 py-3 text-sm">
-                                        <StatusBadge status={p.status} />
+                                        <StatusBadge value={p.status} tones={STATUS_TONES} />
                                     </td>
                                 </tr>
                             ))}
