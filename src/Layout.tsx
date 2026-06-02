@@ -33,6 +33,48 @@ function LockIcon() {
   );
 }
 
+// The Sales tab for a role that can't use it: visible but disabled, with a
+// tooltip explaining which roles unlock it. The tooltip is wired via
+// `aria-describedby` and revealed on hover AND keyboard focus, so it's
+// reachable without a mouse. It stays in the DOM (only its opacity toggles) so
+// screen readers always announce the description when the tab is focused.
+function RestrictedSalesTab() {
+  const [open, setOpen] = useState(false);
+  const tipId = "sales-restricted-tip";
+  const message = `Requires the ${SALES_ROLE_LABELS} role`;
+
+  return (
+    <span className="relative">
+      <span
+        aria-disabled="true"
+        aria-describedby={tipId}
+        tabIndex={0}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") setOpen(false);
+        }}
+        className="flex cursor-not-allowed items-center gap-1 border-b-2 border-transparent pb-0.5 text-sm font-medium text-gray-300"
+      >
+        Sales
+        <LockIcon />
+      </span>
+      <span
+        role="tooltip"
+        id={tipId}
+        className={[
+          "pointer-events-none absolute left-0 top-full z-10 mt-1.5 w-max max-w-xs rounded-md bg-gray-900 px-2 py-1 text-xs font-medium text-white shadow-lg transition-opacity",
+          open ? "opacity-100" : "opacity-0",
+        ].join(" ")}
+      >
+        {message}
+      </span>
+    </span>
+  );
+}
+
 // Nav link styling. The active route gets a stronger color + an underline rule
 // so there's a clear "you are here" indicator (NavLink toggles `isActive`).
 function navLinkClass({ isActive }: { isActive: boolean }) {
@@ -77,15 +119,7 @@ export default function Layout() {
                 Sales
               </NavLink>
             ) : (
-              <span
-                aria-disabled="true"
-                tabIndex={0}
-                title={`Requires the ${SALES_ROLE_LABELS} role`}
-                className="flex cursor-not-allowed items-center gap-1 border-b-2 border-transparent pb-0.5 text-sm font-medium text-gray-300"
-              >
-                Sales
-                <LockIcon />
-              </span>
+              <RestrictedSalesTab />
             )}
           </nav>
         </div>
