@@ -3,489 +3,489 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import WorkOrder from "./WorkOrder";
 import {
-    jsonError,
-    jsonOk,
-    mockFetchByUrl,
-    renderWithProviders,
-    setRole,
+  jsonError,
+  jsonOk,
+  mockFetchByUrl,
+  renderWithProviders,
+  setRole,
 } from "../test/utils";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 type Step = {
-    id: string;
-    bomItemId: string;
-    status: string;
-    installedPartInstanceId: string | null;
-    installedActor: string | null;
-    validatedActor: string | null;
-    certifiedActor: string | null;
-    childPartNumber: string;
-    childPartName: string;
-    installedAt: string | null;
-    validatedAt: string | null;
-    certifiedAt: string | null;
+  id: string;
+  bomItemId: string;
+  status: string;
+  installedPartInstanceId: string | null;
+  installedActor: string | null;
+  validatedActor: string | null;
+  certifiedActor: string | null;
+  childPartNumber: string;
+  childPartName: string;
+  installedAt: string | null;
+  validatedAt: string | null;
+  certifiedAt: string | null;
 };
 
 function makeStep(over: Partial<Step> = {}): Step {
-    return {
-        id: "step-1",
-        bomItemId: "bom-1",
-        status: "PENDING",
-        installedPartInstanceId: null,
-        installedActor: null,
-        validatedActor: null,
-        certifiedActor: null,
-        childPartNumber: "PN-100",
-        childPartName: "Widget",
-        installedAt: null,
-        validatedAt: null,
-        certifiedAt: null,
-        ...over,
-    };
+  return {
+    id: "step-1",
+    bomItemId: "bom-1",
+    status: "PENDING",
+    installedPartInstanceId: null,
+    installedActor: null,
+    validatedActor: null,
+    certifiedActor: null,
+    childPartNumber: "PN-100",
+    childPartName: "Widget",
+    installedAt: null,
+    validatedAt: null,
+    certifiedAt: null,
+    ...over,
+  };
 }
 
 function makeWorkOrder(steps: Step[]) {
-    return {
-        id: "wo-1",
-        status: "OPEN",
-        customerOrderLineId: null,
-        partNumber: "ASSY-1",
-        serialNumber: "SN-001",
-        steps,
-        createdAt: "2026-01-01T00:00:00Z",
-        updatedAt: "2026-01-01T00:00:00Z",
-    };
+  return {
+    id: "wo-1",
+    status: "OPEN",
+    customerOrderLineId: null,
+    partNumber: "ASSY-1",
+    serialNumber: "SN-001",
+    steps,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  };
 }
 
 // Convenience: stub the OPEN work-orders list endpoint with the given orders
 // (wrapped in the pagy `{ data, meta }` envelope) plus an empty BOM by default.
 function workOrdersRoute(orders: ReturnType<typeof makeWorkOrder>[]) {
-    return {
-        match: (url: string) => /\/work-orders\?status=OPEN/.test(url),
-        respond: () => jsonOk({ data: orders, meta: {} }),
-    };
+  return {
+    match: (url: string) => /\/work-orders\?status=OPEN/.test(url),
+    respond: () => jsonOk({ data: orders, meta: {} }),
+  };
 }
 
 function emptyBomRoute() {
-    return {
-        match: (url: string) => /\/bom$/.test(url),
-        respond: () => jsonOk({ data: [] }),
-    };
+  return {
+    match: (url: string) => /\/bom$/.test(url),
+    respond: () => jsonOk({ data: [] }),
+  };
 }
 
 function renderScreen() {
-    return renderWithProviders(<WorkOrder />);
+  return renderWithProviders(<WorkOrder />);
 }
 
 beforeEach(() => {
-    setRole("TECH_1");
+  setRole("TECH_1");
 });
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 describe("WorkOrder", () => {
-    it("shows a loading state then renders the work order header and steps", async () => {
-        mockFetchByUrl([
-            workOrdersRoute([makeWorkOrder([makeStep()])]),
-            emptyBomRoute(),
-        ]);
+  it("shows a loading state then renders the work order header and steps", async () => {
+    mockFetchByUrl([
+      workOrdersRoute([makeWorkOrder([makeStep()])]),
+      emptyBomRoute(),
+    ]);
 
-        renderScreen();
+    renderScreen();
 
-        expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
 
-        expect(await screen.findByText("Work Order SN-001")).toBeInTheDocument();
-        expect(screen.getByText("ASSY-1 · OPEN")).toBeInTheDocument();
-        expect(screen.getByText("Widget")).toBeInTheDocument();
-        // PENDING status pill.
-        expect(screen.getByText("PENDING")).toBeInTheDocument();
-        // Acting-as banner reflects TECH_1 -> jamie.
-        expect(screen.getByText("Acting as jamie@factory.com")).toBeInTheDocument();
+    expect(await screen.findByText("Work Order SN-001")).toBeInTheDocument();
+    expect(screen.getByText("ASSY-1 · OPEN")).toBeInTheDocument();
+    expect(screen.getByText("Widget")).toBeInTheDocument();
+    // PENDING status pill.
+    expect(screen.getByText("PENDING")).toBeInTheDocument();
+    // Acting-as banner reflects TECH_1 -> jamie.
+    expect(screen.getByText("Acting as jamie@factory.com")).toBeInTheDocument();
+  });
+
+  it("surfaces a query error", async () => {
+    mockFetchByUrl([
+      {
+        match: (url) => /\/work-orders/.test(url),
+        respond: () => jsonError(500, "Error", { error: "boom" }),
+      },
+    ]);
+
+    renderScreen();
+
+    expect(await screen.findByText(/Error:/)).toBeInTheDocument();
+  });
+
+  it("shows 'no active work order' when the list is empty", async () => {
+    mockFetchByUrl([workOrdersRoute([])]);
+
+    renderScreen();
+
+    expect(
+      await screen.findByText("No active work order."),
+    ).toBeInTheDocument();
+  });
+
+  it("enables Install for a PENDING step as TECH_1 and fires the action, then refetches", async () => {
+    const user = userEvent.setup();
+    let workOrdersCallCount = 0;
+    mockFetchByUrl([
+      {
+        match: (url) => /\/work-orders\?status=OPEN/.test(url),
+        respond: () => {
+          workOrdersCallCount += 1;
+          return jsonOk({ data: [makeWorkOrder([makeStep()])], meta: {} });
+        },
+      },
+      emptyBomRoute(),
+      {
+        match: (url) => /\/steps\/step-1\/install$/.test(url),
+        respond: () =>
+          jsonOk(makeWorkOrder([makeStep({ status: "INSTALLED" })])),
+      },
+    ]);
+
+    renderScreen();
+
+    const installBtn = await screen.findByRole("button", { name: "Install" });
+    expect(installBtn).toBeEnabled();
+
+    // Without a serial, clicking surfaces an inline validation error.
+    await user.click(installBtn);
+    expect(
+      await screen.findByText("Enter the serial number to install."),
+    ).toBeInTheDocument();
+
+    // Enter a serial and install.
+    await user.type(screen.getByPlaceholderText("Serial #"), "SN-XYZ");
+    await user.click(installBtn);
+
+    await waitFor(() => expect(workOrdersCallCount).toBeGreaterThan(1));
+  });
+
+  it("disables Validate for the actor who installed the step (4-eyes)", async () => {
+    // TECH_1 == jamie installed this INSTALLED step → cannot validate.
+    mockFetchByUrl([
+      workOrdersRoute([
+        makeWorkOrder([
+          makeStep({
+            status: "INSTALLED",
+            installedActor: "jamie@factory.com",
+          }),
+        ]),
+      ]),
+      emptyBomRoute(),
+    ]);
+
+    renderScreen();
+
+    const validateBtn = await screen.findByRole("button", {
+      name: "Validate",
     });
+    expect(validateBtn).toBeDisabled();
+    expect(validateBtn).toHaveAttribute(
+      "title",
+      expect.stringContaining("4-eyes"),
+    );
+  });
 
-    it("surfaces a query error", async () => {
-        mockFetchByUrl([
-            {
-                match: (url) => /\/work-orders/.test(url),
-                respond: () => jsonError(500, "Error", { error: "boom" }),
-            },
-        ]);
+  it("enables Validate as TECH_2 when a different actor installed the step", async () => {
+    setRole("TECH_2");
+    mockFetchByUrl([
+      workOrdersRoute([
+        makeWorkOrder([
+          makeStep({
+            status: "INSTALLED",
+            installedActor: "jamie@factory.com",
+          }),
+        ]),
+      ]),
+      emptyBomRoute(),
+      {
+        match: (url) => /\/steps\/step-1\/validate$/.test(url),
+        respond: () =>
+          jsonOk(makeWorkOrder([makeStep({ status: "VALIDATED" })])),
+      },
+    ]);
 
-        renderScreen();
+    renderScreen();
 
-        expect(await screen.findByText(/Error:/)).toBeInTheDocument();
+    const validateBtn = await screen.findByRole("button", {
+      name: "Validate",
     });
+    expect(validateBtn).toBeEnabled();
+  });
 
-    it("shows 'no active work order' when the list is empty", async () => {
-        mockFetchByUrl([workOrdersRoute([])]);
+  it("disables Certify for non-QA roles and enables it for QA", async () => {
+    // First render as TECH_1 (non-QA) → Certify disabled.
+    mockFetchByUrl([
+      workOrdersRoute([makeWorkOrder([makeStep({ status: "VALIDATED" })])]),
+      emptyBomRoute(),
+    ]);
 
-        renderScreen();
-
-        expect(
-            await screen.findByText("No active work order."),
-        ).toBeInTheDocument();
+    const { unmount } = renderScreen();
+    const certifyDisabled = await screen.findByRole("button", {
+      name: "Certify",
     });
+    expect(certifyDisabled).toBeDisabled();
+    expect(certifyDisabled).toHaveAttribute(
+      "title",
+      expect.stringContaining("QA"),
+    );
+    unmount();
 
-    it("enables Install for a PENDING step as TECH_1 and fires the action, then refetches", async () => {
-        const user = userEvent.setup();
-        let workOrdersCallCount = 0;
-        mockFetchByUrl([
-            {
-                match: (url) => /\/work-orders\?status=OPEN/.test(url),
-                respond: () => {
-                    workOrdersCallCount += 1;
-                    return jsonOk({ data: [makeWorkOrder([makeStep()])], meta: {} });
-                },
-            },
-            emptyBomRoute(),
-            {
-                match: (url) => /\/steps\/step-1\/install$/.test(url),
-                respond: () =>
-                    jsonOk(makeWorkOrder([makeStep({ status: "INSTALLED" })])),
-            },
-        ]);
+    // Now as QA → Certify enabled.
+    setRole("QA");
+    mockFetchByUrl([
+      workOrdersRoute([makeWorkOrder([makeStep({ status: "VALIDATED" })])]),
+      emptyBomRoute(),
+      {
+        match: (url) => /\/steps\/step-1\/certify$/.test(url),
+        respond: () =>
+          jsonOk(makeWorkOrder([makeStep({ status: "CERTIFIED" })])),
+      },
+    ]);
 
-        renderScreen();
-
-        const installBtn = await screen.findByRole("button", { name: "Install" });
-        expect(installBtn).toBeEnabled();
-
-        // Without a serial, clicking surfaces an inline validation error.
-        await user.click(installBtn);
-        expect(
-            await screen.findByText("Enter the serial number to install."),
-        ).toBeInTheDocument();
-
-        // Enter a serial and install.
-        await user.type(screen.getByPlaceholderText("Serial #"), "SN-XYZ");
-        await user.click(installBtn);
-
-        await waitFor(() => expect(workOrdersCallCount).toBeGreaterThan(1));
+    renderScreen();
+    const certifyEnabled = await screen.findByRole("button", {
+      name: "Certify",
     });
+    expect(certifyEnabled).toBeEnabled();
+  });
 
-    it("disables Validate for the actor who installed the step (4-eyes)", async () => {
-        // TECH_1 == jamie installed this INSTALLED step → cannot validate.
-        mockFetchByUrl([
-            workOrdersRoute([
-                makeWorkOrder([
-                    makeStep({
-                        status: "INSTALLED",
-                        installedActor: "jamie@factory.com",
-                    }),
-                ]),
-            ]),
-            emptyBomRoute(),
-        ]);
+  it("keeps Complete disabled until all steps are CERTIFIED", async () => {
+    mockFetchByUrl([
+      workOrdersRoute([
+        makeWorkOrder([
+          makeStep({ id: "step-1", status: "CERTIFIED" }),
+          makeStep({
+            id: "step-2",
+            bomItemId: "bom-2",
+            status: "VALIDATED",
+            childPartName: "Gadget",
+          }),
+        ]),
+      ]),
+      emptyBomRoute(),
+    ]);
 
-        renderScreen();
+    renderScreen();
 
-        const validateBtn = await screen.findByRole("button", {
-            name: "Validate",
-        });
-        expect(validateBtn).toBeDisabled();
-        expect(validateBtn).toHaveAttribute(
-            "title",
-            expect.stringContaining("4-eyes"),
-        );
+    const completeBtn = await screen.findByRole("button", {
+      name: "Complete work order",
     });
+    expect(completeBtn).toBeDisabled();
+    expect(
+      screen.getByText("All steps must be CERTIFIED to complete."),
+    ).toBeInTheDocument();
+  });
 
-    it("enables Validate as TECH_2 when a different actor installed the step", async () => {
-        setRole("TECH_2");
-        mockFetchByUrl([
-            workOrdersRoute([
-                makeWorkOrder([
-                    makeStep({
-                        status: "INSTALLED",
-                        installedActor: "jamie@factory.com",
-                    }),
-                ]),
-            ]),
-            emptyBomRoute(),
-            {
-                match: (url) => /\/steps\/step-1\/validate$/.test(url),
-                respond: () =>
-                    jsonOk(makeWorkOrder([makeStep({ status: "VALIDATED" })])),
-            },
-        ]);
+  it("enables Complete when all steps are CERTIFIED and fires the complete action", async () => {
+    const user = userEvent.setup();
+    const fetchMock = mockFetchByUrl([
+      workOrdersRoute([makeWorkOrder([makeStep({ status: "CERTIFIED" })])]),
+      emptyBomRoute(),
+      {
+        match: (url) => /\/complete$/.test(url),
+        respond: () =>
+          jsonOk({
+            ...makeWorkOrder([makeStep({ status: "CERTIFIED" })]),
+            status: "COMPLETED",
+          }),
+      },
+    ]);
 
-        renderScreen();
+    renderScreen();
 
-        const validateBtn = await screen.findByRole("button", {
-            name: "Validate",
-        });
-        expect(validateBtn).toBeEnabled();
+    const completeBtn = await screen.findByRole("button", {
+      name: "Complete work order",
     });
+    expect(completeBtn).toBeEnabled();
+    await user.click(completeBtn);
 
-    it("disables Certify for non-QA roles and enables it for QA", async () => {
-        // First render as TECH_1 (non-QA) → Certify disabled.
-        mockFetchByUrl([
-            workOrdersRoute([makeWorkOrder([makeStep({ status: "VALIDATED" })])]),
-            emptyBomRoute(),
-        ]);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some((c) =>
+          /\/complete$/.test(String(c[0])),
+        ),
+      ).toBe(true),
+    );
+  });
 
-        const { unmount } = renderScreen();
-        const certifyDisabled = await screen.findByRole("button", {
-            name: "Certify",
-        });
-        expect(certifyDisabled).toBeDisabled();
-        expect(certifyDisabled).toHaveAttribute(
-            "title",
-            expect.stringContaining("QA"),
-        );
-        unmount();
+  it("does not block a PENDING step whose prerequisite is already CERTIFIED", async () => {
+    mockFetchByUrl([
+      workOrdersRoute([
+        makeWorkOrder([
+          makeStep({
+            id: "prereq",
+            bomItemId: "bom-prereq",
+            status: "CERTIFIED",
+            childPartName: "Base Plate",
+          }),
+          makeStep({
+            id: "dependent",
+            bomItemId: "bom-dep",
+            status: "PENDING",
+            childPartName: "Top Cover",
+          }),
+        ]),
+      ]),
+      {
+        match: (url) => /\/parts\/ASSY-1\/bom$/.test(url),
+        respond: () =>
+          jsonOk({
+            data: [
+              {
+                id: "bom-dep",
+                quantity: 1,
+                childPartNumber: "PN-100",
+                childPartName: "Top Cover",
+                deletedAt: null,
+                dependencies: [
+                  {
+                    prerequisiteBomItemId: "bom-prereq",
+                    prerequisitePartNumber: "PN-099",
+                  },
+                ],
+              },
+            ],
+          }),
+      },
+    ]);
 
-        // Now as QA → Certify enabled.
-        setRole("QA");
-        mockFetchByUrl([
-            workOrdersRoute([makeWorkOrder([makeStep({ status: "VALIDATED" })])]),
-            emptyBomRoute(),
-            {
-                match: (url) => /\/steps\/step-1\/certify$/.test(url),
-                respond: () =>
-                    jsonOk(makeWorkOrder([makeStep({ status: "CERTIFIED" })])),
-            },
-        ]);
+    renderScreen();
 
-        renderScreen();
-        const certifyEnabled = await screen.findByRole("button", {
-            name: "Certify",
-        });
-        expect(certifyEnabled).toBeEnabled();
-    });
+    // Dependent step is installable (prereq certified) — no BLOCKED pill.
+    expect(await screen.findByText("Top Cover")).toBeInTheDocument();
+    expect(screen.queryByText("BLOCKED")).not.toBeInTheDocument();
+    // Both steps offer an Install button (prereq is CERTIFIED so only the
+    // dependent shows Install; assert at least one is enabled).
+    const installBtns = screen.getAllByRole("button", { name: "Install" });
+    expect(installBtns.length).toBeGreaterThan(0);
+  });
 
-    it("keeps Complete disabled until all steps are CERTIFIED", async () => {
-        mockFetchByUrl([
-            workOrdersRoute([
-                makeWorkOrder([
-                    makeStep({ id: "step-1", status: "CERTIFIED" }),
-                    makeStep({
-                        id: "step-2",
-                        bomItemId: "bom-2",
-                        status: "VALIDATED",
-                        childPartName: "Gadget",
-                    }),
-                ]),
-            ]),
-            emptyBomRoute(),
-        ]);
+  it("surfaces a complete-action error inline", async () => {
+    const user = userEvent.setup();
+    mockFetchByUrl([
+      workOrdersRoute([makeWorkOrder([makeStep({ status: "CERTIFIED" })])]),
+      emptyBomRoute(),
+      {
+        match: (url) => /\/complete$/.test(url),
+        respond: () =>
+          jsonError(422, "Error", {
+            error: "Cannot complete: open steps remain",
+            code: "UNPROCESSABLE",
+          }),
+      },
+    ]);
 
-        renderScreen();
+    renderScreen();
 
-        const completeBtn = await screen.findByRole("button", {
-            name: "Complete work order",
-        });
-        expect(completeBtn).toBeDisabled();
-        expect(
-            screen.getByText("All steps must be CERTIFIED to complete."),
-        ).toBeInTheDocument();
-    });
+    await user.click(
+      await screen.findByRole("button", { name: "Complete work order" }),
+    );
 
-    it("enables Complete when all steps are CERTIFIED and fires the complete action", async () => {
-        const user = userEvent.setup();
-        const fetchMock = mockFetchByUrl([
-            workOrdersRoute([makeWorkOrder([makeStep({ status: "CERTIFIED" })])]),
-            emptyBomRoute(),
-            {
-                match: (url) => /\/complete$/.test(url),
-                respond: () =>
-                    jsonOk({
-                        ...makeWorkOrder([makeStep({ status: "CERTIFIED" })]),
-                        status: "COMPLETED",
-                    }),
-            },
-        ]);
+    const err = await screen.findByText(/Cannot complete: open steps remain/);
+    expect(err).toHaveTextContent("[UNPROCESSABLE]");
+  });
 
-        renderScreen();
+  it("shows a derived-BLOCKED pill and the blocking part inline", async () => {
+    mockFetchByUrl([
+      workOrdersRoute([
+        makeWorkOrder([
+          makeStep({
+            id: "prereq",
+            bomItemId: "bom-prereq",
+            status: "INSTALLED",
+            childPartName: "Base Plate",
+          }),
+          makeStep({
+            id: "dependent",
+            bomItemId: "bom-dep",
+            status: "PENDING",
+            childPartName: "Top Cover",
+          }),
+        ]),
+      ]),
+      {
+        match: (url) => /\/parts\/ASSY-1\/bom$/.test(url),
+        respond: () =>
+          jsonOk({
+            data: [
+              {
+                id: "bom-dep",
+                quantity: 1,
+                childPartNumber: "PN-100",
+                childPartName: "Top Cover",
+                deletedAt: null,
+                dependencies: [
+                  {
+                    prerequisiteBomItemId: "bom-prereq",
+                    prerequisitePartNumber: "PN-099",
+                  },
+                ],
+              },
+            ],
+          }),
+      },
+    ]);
 
-        const completeBtn = await screen.findByRole("button", {
-            name: "Complete work order",
-        });
-        expect(completeBtn).toBeEnabled();
-        await user.click(completeBtn);
+    renderScreen();
 
-        await waitFor(() =>
-            expect(
-                fetchMock.mock.calls.some((c) =>
-                    /\/complete$/.test(String(c[0])),
-                ),
-            ).toBe(true),
-        );
-    });
+    // The dependent step should render a BLOCKED pill and an inline notice.
+    expect(await screen.findByText("BLOCKED")).toBeInTheDocument();
+    expect(screen.getByText(/Blocked by Base Plate/)).toBeInTheDocument();
+  });
 
-    it("does not block a PENDING step whose prerequisite is already CERTIFIED", async () => {
-        mockFetchByUrl([
-            workOrdersRoute([
-                makeWorkOrder([
-                    makeStep({
-                        id: "prereq",
-                        bomItemId: "bom-prereq",
-                        status: "CERTIFIED",
-                        childPartName: "Base Plate",
-                    }),
-                    makeStep({
-                        id: "dependent",
-                        bomItemId: "bom-dep",
-                        status: "PENDING",
-                        childPartName: "Top Cover",
-                    }),
-                ]),
-            ]),
-            {
-                match: (url) => /\/parts\/ASSY-1\/bom$/.test(url),
-                respond: () =>
-                    jsonOk({
-                        data: [
-                            {
-                                id: "bom-dep",
-                                quantity: 1,
-                                childPartNumber: "PN-100",
-                                childPartName: "Top Cover",
-                                deletedAt: null,
-                                dependencies: [
-                                    {
-                                        prerequisiteBomItemId: "bom-prereq",
-                                        prerequisitePartNumber: "PN-099",
-                                    },
-                                ],
-                            },
-                        ],
-                    }),
-            },
-        ]);
+  it("surfaces a server error (409) with the error code when an action fails", async () => {
+    const user = userEvent.setup();
+    mockFetchByUrl([
+      workOrdersRoute([makeWorkOrder([makeStep()])]),
+      emptyBomRoute(),
+      {
+        match: (url) => /\/steps\/step-1\/install$/.test(url),
+        respond: () =>
+          jsonError(409, "Error", {
+            error: "Step already installed",
+            code: "CONFLICT",
+          }),
+      },
+    ]);
 
-        renderScreen();
+    renderScreen();
 
-        // Dependent step is installable (prereq certified) — no BLOCKED pill.
-        expect(await screen.findByText("Top Cover")).toBeInTheDocument();
-        expect(screen.queryByText("BLOCKED")).not.toBeInTheDocument();
-        // Both steps offer an Install button (prereq is CERTIFIED so only the
-        // dependent shows Install; assert at least one is enabled).
-        const installBtns = screen.getAllByRole("button", { name: "Install" });
-        expect(installBtns.length).toBeGreaterThan(0);
-    });
+    await user.type(
+      await screen.findByPlaceholderText("Serial #"),
+      "SN-XYZ",
+    );
+    await user.click(screen.getByRole("button", { name: "Install" }));
 
-    it("surfaces a complete-action error inline", async () => {
-        const user = userEvent.setup();
-        mockFetchByUrl([
-            workOrdersRoute([makeWorkOrder([makeStep({ status: "CERTIFIED" })])]),
-            emptyBomRoute(),
-            {
-                match: (url) => /\/complete$/.test(url),
-                respond: () =>
-                    jsonError(422, "Error", {
-                        error: "Cannot complete: open steps remain",
-                        code: "UNPROCESSABLE",
-                    }),
-            },
-        ]);
+    const err = await screen.findByText(/Step already installed/);
+    expect(err).toHaveTextContent("[CONFLICT]");
+  });
 
-        renderScreen();
+  it("renders actor provenance line once a step has actors", async () => {
+    mockFetchByUrl([
+      workOrdersRoute([
+        makeWorkOrder([
+          makeStep({
+            status: "CERTIFIED",
+            installedActor: "jamie@factory.com",
+            validatedActor: "riley@factory.com",
+            certifiedActor: "quinn@factory.com",
+          }),
+        ]),
+      ]),
+      emptyBomRoute(),
+    ]);
 
-        await user.click(
-            await screen.findByRole("button", { name: "Complete work order" }),
-        );
+    renderScreen();
 
-        const err = await screen.findByText(/Cannot complete: open steps remain/);
-        expect(err).toHaveTextContent("[UNPROCESSABLE]");
-    });
-
-    it("shows a derived-BLOCKED pill and the blocking part inline", async () => {
-        mockFetchByUrl([
-            workOrdersRoute([
-                makeWorkOrder([
-                    makeStep({
-                        id: "prereq",
-                        bomItemId: "bom-prereq",
-                        status: "INSTALLED",
-                        childPartName: "Base Plate",
-                    }),
-                    makeStep({
-                        id: "dependent",
-                        bomItemId: "bom-dep",
-                        status: "PENDING",
-                        childPartName: "Top Cover",
-                    }),
-                ]),
-            ]),
-            {
-                match: (url) => /\/parts\/ASSY-1\/bom$/.test(url),
-                respond: () =>
-                    jsonOk({
-                        data: [
-                            {
-                                id: "bom-dep",
-                                quantity: 1,
-                                childPartNumber: "PN-100",
-                                childPartName: "Top Cover",
-                                deletedAt: null,
-                                dependencies: [
-                                    {
-                                        prerequisiteBomItemId: "bom-prereq",
-                                        prerequisitePartNumber: "PN-099",
-                                    },
-                                ],
-                            },
-                        ],
-                    }),
-            },
-        ]);
-
-        renderScreen();
-
-        // The dependent step should render a BLOCKED pill and an inline notice.
-        expect(await screen.findByText("BLOCKED")).toBeInTheDocument();
-        expect(screen.getByText(/Blocked by Base Plate/)).toBeInTheDocument();
-    });
-
-    it("surfaces a server error (409) with the error code when an action fails", async () => {
-        const user = userEvent.setup();
-        mockFetchByUrl([
-            workOrdersRoute([makeWorkOrder([makeStep()])]),
-            emptyBomRoute(),
-            {
-                match: (url) => /\/steps\/step-1\/install$/.test(url),
-                respond: () =>
-                    jsonError(409, "Error", {
-                        error: "Step already installed",
-                        code: "CONFLICT",
-                    }),
-            },
-        ]);
-
-        renderScreen();
-
-        await user.type(
-            await screen.findByPlaceholderText("Serial #"),
-            "SN-XYZ",
-        );
-        await user.click(screen.getByRole("button", { name: "Install" }));
-
-        const err = await screen.findByText(/Step already installed/);
-        expect(err).toHaveTextContent("[CONFLICT]");
-    });
-
-    it("renders actor provenance line once a step has actors", async () => {
-        mockFetchByUrl([
-            workOrdersRoute([
-                makeWorkOrder([
-                    makeStep({
-                        status: "CERTIFIED",
-                        installedActor: "jamie@factory.com",
-                        validatedActor: "riley@factory.com",
-                        certifiedActor: "quinn@factory.com",
-                    }),
-                ]),
-            ]),
-            emptyBomRoute(),
-        ]);
-
-        renderScreen();
-
-        const provenance = await screen.findByText(/Installed by jamie@factory.com/);
-        expect(provenance).toHaveTextContent("Validated by riley@factory.com");
-        expect(provenance).toHaveTextContent("Certified by quinn@factory.com");
-    });
+    const provenance = await screen.findByText(/Installed by jamie@factory.com/);
+    expect(provenance).toHaveTextContent("Validated by riley@factory.com");
+    expect(provenance).toHaveTextContent("Certified by quinn@factory.com");
+  });
 });

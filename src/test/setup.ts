@@ -6,6 +6,6 @@ import { afterEach, vi } from "vitest";
 // Global teardown so individual test files don't each repeat it: undo any
 // stubbed globals (e.g. fetch) and clear the actor-role cookie between tests.
 afterEach(() => {
-    vi.unstubAllGlobals();
-    document.cookie = "actor_role=; path=/; max-age=0";
+  vi.unstubAllGlobals();
+  document.cookie = "actor_role=; path=/; max-age=0";
 });
