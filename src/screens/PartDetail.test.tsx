@@ -244,8 +244,8 @@ describe("PartDetail", () => {
 
     await screen.findByRole("heading", { level: 1 });
     // From DRAFT: RELEASED and OBSOLETE are valid; DRAFT itself is filtered out.
-    const released = screen.getByRole("button", { name: "→ RELEASED" });
-    const obsolete = screen.getByRole("button", { name: "→ OBSOLETE" });
+    const released = screen.getByRole("button", { name: "Mark as Released" });
+    const obsolete = screen.getByRole("button", { name: "Mark as Obsolete" });
     expect(released).toBeEnabled();
     expect(obsolete).toBeEnabled();
   });
@@ -257,8 +257,8 @@ describe("PartDetail", () => {
 
     await screen.findByRole("heading", { level: 1 });
     // From RELEASED: only OBSOLETE is valid; DRAFT is invalid → disabled.
-    expect(screen.getByRole("button", { name: "→ DRAFT" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "→ OBSOLETE" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Mark as Draft" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mark as Obsolete" })).toBeEnabled();
   });
 
   it("fires a valid status transition POST", async () => {
@@ -270,7 +270,7 @@ describe("PartDetail", () => {
     renderScreen();
 
     await screen.findByRole("heading", { level: 1 });
-    await user.click(screen.getByRole("button", { name: "→ RELEASED" }));
+    await user.click(screen.getByRole("button", { name: "Mark as Released" }));
 
     await waitFor(() => {
       const statusPost = fetchMock.mock.calls.find(
@@ -297,7 +297,7 @@ describe("PartDetail", () => {
     renderScreen();
 
     await screen.findByRole("heading", { level: 1 });
-    await user.click(screen.getByRole("button", { name: "→ RELEASED" }));
+    await user.click(screen.getByRole("button", { name: "Mark as Released" }));
 
     expect(
       await screen.findByText(
@@ -318,7 +318,7 @@ describe("PartDetail", () => {
     renderScreen();
 
     await screen.findByRole("heading", { level: 1 });
-    await user.click(screen.getByRole("button", { name: "→ RELEASED" }));
+    await user.click(screen.getByRole("button", { name: "Mark as Released" }));
 
     // No "Invalid transition:" prefix for non-INVALID_TRANSITION codes.
     expect(
@@ -345,7 +345,7 @@ describe("PartDetail", () => {
     renderScreen();
 
     await screen.findByRole("heading", { level: 1 });
-    await user.click(screen.getByRole("button", { name: "→ RELEASED" }));
+    await user.click(screen.getByRole("button", { name: "Mark as Released" }));
 
     expect(await screen.findByText("network down")).toBeInTheDocument();
   });

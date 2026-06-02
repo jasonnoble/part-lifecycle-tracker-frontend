@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "../apiClient";
 import { StatusBadge, type Tone } from "../components/Badge";
 import type { BomItem, Part, PartStatus } from "../api/types";
+import { useDocumentTitle } from "../useDocumentTitle";
 
 // --- Types (camelCase, matching the real backend) ------------------------
 // Part / BomItem / PartStatus are shared via ../api/types. The /bom endpoint
@@ -47,6 +48,11 @@ const ALL_TARGETS: PartStatus[] = ["DRAFT", "RELEASED", "OBSOLETE"];
 
 function canTransition(from: PartStatus, to: PartStatus): boolean {
   return STATUS_FLOW[from]?.includes(to) ?? false;
+}
+
+// Human label for a status-transition button, e.g. "Mark as Obsolete".
+function transitionLabel(to: PartStatus): string {
+  return `Mark as ${to.charAt(0)}${to.slice(1).toLowerCase()}`;
 }
 
 function formatDate(value: string): string {
@@ -110,6 +116,7 @@ function ContextModal({
 
 export default function PartDetail() {
   const { partNumber } = useParams<{ partNumber: string }>();
+  useDocumentTitle(partNumber);
   const queryClient = useQueryClient();
   const [showContext, setShowContext] = useState(false);
 
@@ -210,7 +217,7 @@ export default function PartDetail() {
                 }
                 className="rounded-md border px-3 py-1.5 text-sm font-medium enabled:border-blue-600 enabled:bg-blue-600 enabled:text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400"
               >
-                → {to}
+                {transitionLabel(to)}
               </button>
             );
           })}
@@ -234,7 +241,9 @@ export default function PartDetail() {
             Error: {contextQuery.error.message}
           </p>
         ) : instanceStatuses.length === 0 ? (
-          <p className="text-gray-500">No instances.</p>
+          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+            No instances.
+          </p>
         ) : (
           <ul className="flex flex-wrap gap-2">
             {instanceStatuses.map((status) => (
@@ -258,7 +267,9 @@ export default function PartDetail() {
         ) : bomQuery.error ? (
           <p className="text-red-600">Error: {bomQuery.error.message}</p>
         ) : bomLines.length === 0 ? (
-          <p className="text-gray-500">No BOM lines.</p>
+          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+            No BOM lines.
+          </p>
         ) : (
           <table className="w-full border-collapse text-sm">
             <thead>

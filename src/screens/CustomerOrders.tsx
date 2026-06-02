@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiList } from "../apiClient";
 import type { Part } from "../api/types";
 import { Badge, StatusBadge, type Tone } from "../components/Badge";
-import { getRole } from "../roles";
+import { canViewSales, getRole } from "../roles";
+import { useDocumentTitle } from "../useDocumentTitle";
 
 // ---------------------------------------------------------------------------
 // Types — mirror the real backend contract (camelCase, hyphenated endpoints).
@@ -43,9 +44,6 @@ type SupplierPurchaseOrder = {
   customerOrderId: string | null;
   lines: SupplierPoLine[];
 };
-
-// Roles allowed to view/manage customer orders.
-const ALLOWED_ROLES = new Set(["SALESPERSON", "SITE_MANAGER"]);
 
 // ---------------------------------------------------------------------------
 // Fulfillment derivation
@@ -400,8 +398,9 @@ function NewOrderForm({ onClose }: { onClose: () => void }) {
 // Main screen
 // ---------------------------------------------------------------------------
 export default function CustomerOrders() {
+  useDocumentTitle("Sales");
   const role = getRole();
-  const allowed = ALLOWED_ROLES.has(role);
+  const allowed = canViewSales(role);
 
   const [showNewForm, setShowNewForm] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -444,12 +443,12 @@ export default function CustomerOrders() {
       {error && <p className="text-sm text-red-600">Error: {error.message}</p>}
 
       {data && (
+        data.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
+            No customer orders yet.
+          </p>
+        ) : (
         <ul className="divide-y divide-gray-200 overflow-hidden rounded-lg border border-gray-200">
-          {data.length === 0 && (
-            <li className="p-4 text-sm text-gray-500">
-              No customer orders yet.
-            </li>
-          )}
           {data.map((order) => {
             const isOpen = selectedId === order.id;
             return (
@@ -485,6 +484,7 @@ export default function CustomerOrders() {
             );
           })}
         </ul>
+        )
       )}
     </div>
   );
