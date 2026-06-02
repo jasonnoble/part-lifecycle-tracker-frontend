@@ -21,12 +21,11 @@ Copy the example and fill in real values:
 cp .env.example .env.local
 ```
 
-| Var | Dev | Prod (set in Cloudflare Pages) |
-|-----|-----|--------------------------------|
+| Var | Dev | Prod (set as a Workers Build variable) |
+|-----|-----|----------------------------------------|
 | `VITE_API_BASE_URL` | `/api` (goes through the Vite proxy) | the API origin, e.g. `https://partledger.jasonnoble.dev` |
-| `VITE_API_KEY` | the local dev key | the real key |
 
-> ⚠️ **`VITE_*` vars are baked into the JS bundle and are publicly visible in DevTools.** The hardcoded `VITE_API_KEY` ships in the client and is therefore *not* a secret — this is an accepted trade-off for the no-real-auth demo, not an oversight. Don't put anything genuinely sensitive behind a `VITE_` prefix.
+> ⚠️ **`VITE_*` vars are baked into the JS bundle at build time and are publicly visible in DevTools.** Don't put anything genuinely sensitive behind a `VITE_` prefix. Authorization is handled by the `X-Actor-Role` header (see below), not an API key.
 
 `.env.local` is gitignored.
 
@@ -55,9 +54,9 @@ In dev, the app calls relative `/api/*` paths. `vite.config.ts` proxies those to
 
 ## Deploy
 
-Cloudflare Pages, auto-deploying on push (per-PR previews):
+Cloudflare Workers (static-assets) via Workers Builds, auto-deploying on push:
 
-- **Build command:** `npm run build`  ·  **Output dir:** `dist/`
-- **Production env vars:** `VITE_API_BASE_URL` (the API origin), `VITE_API_KEY`
-- `public/_redirects` (`/* /index.html 200`) provides SPA history fallback so deep-link refreshes don't 404.
-- The backend must allow the Pages origin via `rack-cors`, including the custom request headers (`X-Actor-Role`, `X-Api-Key`).
+- **Build command:** `npm run build`  ·  **Output dir:** `dist/` (see `wrangler.jsonc`).
+- **Build-time vars:** set `VITE_API_BASE_URL` (the API origin) under the Worker's *Build → Variables and secrets*. These are build-time only — Workers does not share runtime and build-time vars, and `VITE_*` must exist when `vite build` runs to be inlined.
+- SPA deep-link fallback is handled by `not_found_handling: "single-page-application"` in `wrangler.jsonc` (no `_redirects` file — it conflicts with this flow).
+- The backend must allow the deployed origin via `rack-cors`, including the `X-Actor-Role` request header.
