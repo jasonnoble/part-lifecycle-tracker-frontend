@@ -7,15 +7,15 @@ import InstanceDetail from "./screens/InstanceDetail";
 import CustomerOrders from "./screens/CustomerOrders";
 
 export const router = createBrowserRouter([
-    {
-        path: "/",
-        Component: Layout,
-        children: [
-            { index: true, Component: WorkOrder },              // Assembly Line = home tab
-            { path: "parts", Component: PartsList },
-            { path: "parts/:partNumber", Component: PartDetail },
-            { path: "instances/:serial", Component: InstanceDetail },
-            { path: "sales", Component: CustomerOrders },
-        ],
-    },
+  {
+    path: "/",
+    Component: Layout,
+    children: [
+      { index: true, Component: WorkOrder },              // Assembly Line = home tab
+      { path: "parts", Component: PartsList },
+      { path: "parts/:partNumber", Component: PartDetail },
+      { path: "instances/:serial", Component: InstanceDetail },
+      { path: "sales", Component: CustomerOrders },
+    ],
+  },
 ]);
