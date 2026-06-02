@@ -4,29 +4,77 @@ import { api } from "../apiClient";
 import { getRole } from "../roles";
 
 // ---------------------------------------------------------------------------
-// Types — see PR body for documented API shapes / assumptions.
+// Types — mirror the real backend contract (camelCase, hyphenated endpoints).
+// Customer-order lines DO NOT carry a fulfillment field; fulfillment is derived
+// by cross-referencing supplier purchase orders (see deriveFulfillment).
 // ---------------------------------------------------------------------------
-type Fulfillment = "IN_STOCK" | "PENDING_PO";
-
 type OrderLine = {
-    part_number: string;
-    name: string;
+    id: string;
     quantity: number;
-    fulfillment: Fulfillment;
+    partNumber: string;
+    partName: string;
 };
 
 type CustomerOrder = {
     id: string;
+    customerName: string;
     // Free-form on the backend; common values handled below, others fall back gracefully.
     status: string;
-    customer_name?: string;
     lines: OrderLine[];
+    createdAt: string;
+    updatedAt: string;
 };
 
-type Part = { id: string; part_number: string; name: string; status: string };
+type Part = {
+    id: string;
+    partNumber: string;
+    name: string;
+    status: string;
+};
+
+type SupplierPoLine = {
+    id: string;
+    quantity: number;
+    quantityReceived: number;
+    status: string; // NEEDS_ORDERING | OPEN | RECEIVED | ORDERED | ...
+    partNumber: string;
+    partName: string;
+};
+
+type SupplierPurchaseOrder = {
+    id: string;
+    supplierId: string;
+    status: string;
+    customerOrderId: string | null;
+    lines: SupplierPoLine[];
+};
 
 // Roles allowed to view/manage customer orders.
 const ALLOWED_ROLES = new Set(["SALESPERSON", "SITE_MANAGER"]);
+
+// ---------------------------------------------------------------------------
+// Fulfillment derivation
+// ---------------------------------------------------------------------------
+// CO lines have no fulfillment flag. We derive a best-effort status by looking
+// at supplier POs tied to THIS customer order (customerOrderId === order.id):
+//   - "pending supplier PO": a matching supplier-PO line for the part exists
+//     and is not yet RECEIVED (still NEEDS_ORDERING / ORDERED / OPEN, etc.)
+//   - "in stock": no outstanding supplier-PO line for the part (either fully
+//     received, or never needed a PO -> assumed satisfiable from stock)
+// This is a derived heuristic, not an authoritative field; the UI labels it as such.
+type DerivedFulfillment = "IN_STOCK" | "PENDING_PO";
+
+function deriveFulfillment(
+    partNumber: string,
+    relatedPoLines: SupplierPoLine[],
+): DerivedFulfillment {
+    const matching = relatedPoLines.filter((l) => l.partNumber === partNumber);
+    if (matching.length === 0) return "IN_STOCK";
+    const hasOutstanding = matching.some(
+        (l) => l.status.toUpperCase() !== "RECEIVED",
+    );
+    return hasOutstanding ? "PENDING_PO" : "IN_STOCK";
+}
 
 // ---------------------------------------------------------------------------
 // Presentational helpers
@@ -36,9 +84,12 @@ function orderStatusClasses(status: string): string {
         case "DELIVERED":
         case "FULFILLED":
         case "COMPLETE":
+        case "COMPLETED":
             return "bg-green-100 text-green-800 ring-green-600/20";
         case "SHIPPED":
+        case "IN_FULFILLMENT":
             return "bg-blue-100 text-blue-800 ring-blue-600/20";
+        case "OPEN":
         case "PENDING":
         case "AWAITING_STOCK":
         case "BACKORDERED":
@@ -63,10 +114,15 @@ function StatusBadge({ status }: { status: string }) {
     );
 }
 
-function FulfillmentBadge({ fulfillment }: { fulfillment: Fulfillment }) {
+function FulfillmentBadge({
+    fulfillment,
+}: {
+    fulfillment: DerivedFulfillment;
+}) {
     const inStock = fulfillment === "IN_STOCK";
     return (
         <span
+            title="Derived from supplier purchase orders — not an authoritative order field."
             className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
                 inStock
                     ? "bg-green-100 text-green-800 ring-green-600/20"
@@ -83,14 +139,27 @@ function FulfillmentBadge({ fulfillment }: { fulfillment: Fulfillment }) {
 // ---------------------------------------------------------------------------
 function OrderDetail({ orderId }: { orderId: string }) {
     const { isPending, error, data } = useQuery({
-        queryKey: ["customer_order", orderId],
+        queryKey: ["customer-order", orderId],
         // Single resource is returned directly (not wrapped in { data, meta }).
-        queryFn: () => api<CustomerOrder>(`/customer_orders/${orderId}`),
+        queryFn: () => api<CustomerOrder>(`/customer-orders/${orderId}`),
+    });
+
+    // Supplier POs are used to derive fulfillment for each line. We filter to
+    // POs linked to this customer order. Loaded independently so the line data
+    // still renders even if this lookup fails.
+    const posQuery = useQuery({
+        queryKey: ["supplier-purchase-orders"],
+        queryFn: () =>
+            api<{ data: SupplierPurchaseOrder[] }>("/supplier-purchase-orders"),
     });
 
     if (isPending) return <p className="p-4 text-sm text-gray-500">Loading order…</p>;
     if (error)
         return <p className="p-4 text-sm text-red-600">Error: {error.message}</p>;
+
+    const relatedPoLines: SupplierPoLine[] = (posQuery.data?.data ?? [])
+        .filter((po) => po.customerOrderId === data.id)
+        .flatMap((po) => po.lines);
 
     return (
         <div className="p-4">
@@ -99,9 +168,7 @@ function OrderDetail({ orderId }: { orderId: string }) {
                     Order {data.id}
                 </h3>
                 <StatusBadge status={data.status} />
-                {data.customer_name && (
-                    <span className="text-sm text-gray-500">{data.customer_name}</span>
-                )}
+                <span className="text-sm text-gray-500">{data.customerName}</span>
             </div>
             <table className="w-full text-left text-sm">
                 <thead>
@@ -115,16 +182,38 @@ function OrderDetail({ orderId }: { orderId: string }) {
                 <tbody>
                     {data.lines.map((line) => (
                         <tr
-                            key={line.part_number}
+                            key={line.id}
                             className="border-b border-gray-100 last:border-0"
                         >
                             <td className="py-2 pr-4 font-mono text-gray-900">
-                                {line.part_number}
+                                {line.partNumber}
                             </td>
-                            <td className="py-2 pr-4 text-gray-700">{line.name}</td>
-                            <td className="py-2 pr-4 text-gray-700">{line.quantity}</td>
+                            <td className="py-2 pr-4 text-gray-700">
+                                {line.partName}
+                            </td>
+                            <td className="py-2 pr-4 text-gray-700">
+                                {line.quantity}
+                            </td>
                             <td className="py-2">
-                                <FulfillmentBadge fulfillment={line.fulfillment} />
+                                {posQuery.isPending ? (
+                                    <span className="text-xs text-gray-400">
+                                        deriving…
+                                    </span>
+                                ) : posQuery.error ? (
+                                    <span
+                                        title={`Could not load supplier POs: ${posQuery.error.message}`}
+                                        className="text-xs text-gray-400"
+                                    >
+                                        unknown
+                                    </span>
+                                ) : (
+                                    <FulfillmentBadge
+                                        fulfillment={deriveFulfillment(
+                                            line.partNumber,
+                                            relatedPoLines,
+                                        )}
+                                    />
+                                )}
                             </td>
                         </tr>
                     ))}
@@ -137,6 +226,10 @@ function OrderDetail({ orderId }: { orderId: string }) {
                     )}
                 </tbody>
             </table>
+            <p className="mt-2 text-xs text-gray-400">
+                Fulfillment is a derived best-effort estimate based on linked
+                supplier purchase orders, not an authoritative order field.
+            </p>
         </div>
     );
 }
@@ -144,12 +237,15 @@ function OrderDetail({ orderId }: { orderId: string }) {
 // ---------------------------------------------------------------------------
 // New order form
 // ---------------------------------------------------------------------------
-type NewOrderPayload = { lines: { part_number: string; quantity: number }[] };
+type NewLine = { partNumber: string; quantity: number };
+type NewOrderPayload = { customerName: string; lines: NewLine[] };
 
 function NewOrderForm({ onClose }: { onClose: () => void }) {
     const queryClient = useQueryClient();
-    const [partNumber, setPartNumber] = useState("");
-    const [quantity, setQuantity] = useState(1);
+    const [customerName, setCustomerName] = useState("");
+    const [lines, setLines] = useState<NewLine[]>([
+        { partNumber: "", quantity: 1 },
+    ]);
 
     const partsQuery = useQuery({
         queryKey: ["parts"],
@@ -158,21 +254,45 @@ function NewOrderForm({ onClose }: { onClose: () => void }) {
 
     const createOrder = useMutation({
         mutationFn: (payload: NewOrderPayload) =>
-            api<CustomerOrder>("/customer_orders", {
+            api<CustomerOrder>("/customer-orders", {
                 method: "POST",
                 body: JSON.stringify(payload),
             }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ["customer_orders"] });
+            queryClient.invalidateQueries({ queryKey: ["customer-orders"] });
             onClose();
         },
     });
 
+    function updateLine(index: number, patch: Partial<NewLine>) {
+        setLines((prev) =>
+            prev.map((l, i) => (i === index ? { ...l, ...patch } : l)),
+        );
+    }
+
+    function addLine() {
+        setLines((prev) => [...prev, { partNumber: "", quantity: 1 }]);
+    }
+
+    function removeLine(index: number) {
+        setLines((prev) => prev.filter((_, i) => i !== index));
+    }
+
     function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
-        if (!partNumber || quantity < 1) return;
-        createOrder.mutate({ lines: [{ part_number: partNumber, quantity }] });
+        const validLines = lines.filter(
+            (l) => l.partNumber && l.quantity >= 1,
+        );
+        if (!customerName.trim() || validLines.length === 0) return;
+        createOrder.mutate({
+            customerName: customerName.trim(),
+            lines: validLines,
+        });
     }
+
+    const canSubmit =
+        customerName.trim().length > 0 &&
+        lines.some((l) => l.partNumber && l.quantity >= 1);
 
     return (
         <form
@@ -182,53 +302,114 @@ function NewOrderForm({ onClose }: { onClose: () => void }) {
             <h2 className="mb-3 text-base font-semibold text-gray-900">
                 New Customer Order
             </h2>
-            <div className="flex flex-wrap items-end gap-4">
-                <label className="flex flex-col text-sm">
-                    <span className="mb-1 font-medium text-gray-700">Part</span>
-                    <select
-                        value={partNumber}
-                        onChange={(e) => setPartNumber(e.target.value)}
-                        className="min-w-56 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
-                        required
-                    >
-                        <option value="" disabled>
-                            {partsQuery.isPending ? "Loading parts…" : "Select a part…"}
-                        </option>
-                        {partsQuery.data?.data.map((p) => (
-                            <option key={p.id} value={p.part_number}>
-                                {p.part_number} — {p.name}
-                            </option>
-                        ))}
-                    </select>
-                </label>
-                <label className="flex flex-col text-sm">
-                    <span className="mb-1 font-medium text-gray-700">Quantity</span>
-                    <input
-                        type="number"
-                        min={1}
-                        value={quantity}
-                        onChange={(e) => setQuantity(Number(e.target.value))}
-                        className="w-24 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
-                        required
-                    />
-                </label>
-                <div className="flex gap-2">
-                    <button
-                        type="submit"
-                        disabled={createOrder.isPending || !partNumber}
-                        className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                    >
-                        {createOrder.isPending ? "Creating…" : "Create order"}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
-                    >
-                        Cancel
-                    </button>
-                </div>
+
+            <label className="mb-4 flex max-w-md flex-col text-sm">
+                <span className="mb-1 font-medium text-gray-700">
+                    Customer name
+                </span>
+                <input
+                    type="text"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    placeholder="e.g. Springfield Taxi Co"
+                    className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                    required
+                />
+            </label>
+
+            <div className="mb-2 text-sm font-medium text-gray-700">
+                Line items
             </div>
+            <div className="flex flex-col gap-3">
+                {lines.map((line, index) => (
+                    <div
+                        key={index}
+                        className="flex flex-wrap items-end gap-4"
+                    >
+                        <label className="flex flex-col text-sm">
+                            <span className="mb-1 font-medium text-gray-700">
+                                Part
+                            </span>
+                            <select
+                                value={line.partNumber}
+                                onChange={(e) =>
+                                    updateLine(index, {
+                                        partNumber: e.target.value,
+                                    })
+                                }
+                                className="min-w-56 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                                required
+                            >
+                                <option value="" disabled>
+                                    {partsQuery.isPending
+                                        ? "Loading parts…"
+                                        : "Select a part…"}
+                                </option>
+                                {partsQuery.data?.data.map((p) => (
+                                    <option
+                                        key={p.id}
+                                        value={p.partNumber}
+                                    >
+                                        {p.partNumber} — {p.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <label className="flex flex-col text-sm">
+                            <span className="mb-1 font-medium text-gray-700">
+                                Quantity
+                            </span>
+                            <input
+                                type="number"
+                                min={1}
+                                value={line.quantity}
+                                onChange={(e) =>
+                                    updateLine(index, {
+                                        quantity: Number(e.target.value),
+                                    })
+                                }
+                                className="w-24 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                                required
+                            />
+                        </label>
+                        {lines.length > 1 && (
+                            <button
+                                type="button"
+                                onClick={() => removeLine(index)}
+                                className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                            >
+                                Remove
+                            </button>
+                        )}
+                    </div>
+                ))}
+            </div>
+
+            <button
+                type="button"
+                onClick={addLine}
+                className="mt-3 rounded-md border border-dashed border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
+            >
+                + Add line item
+            </button>
+
+            <div className="mt-4 flex gap-2">
+                <button
+                    type="submit"
+                    disabled={createOrder.isPending || !canSubmit}
+                    className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                    {createOrder.isPending ? "Creating…" : "Create order"}
+                </button>
+                <button
+                    type="button"
+                    onClick={onClose}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                >
+                    Cancel
+                </button>
+            </div>
+
             {partsQuery.error && (
                 <p className="mt-2 text-sm text-red-600">
                     Could not load parts: {partsQuery.error.message}
@@ -254,8 +435,8 @@ export default function CustomerOrders() {
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
     const { isPending, error, data } = useQuery({
-        queryKey: ["customer_orders"],
-        queryFn: () => api<{ data: CustomerOrder[] }>("/customer_orders"),
+        queryKey: ["customer-orders"],
+        queryFn: () => api<{ data: CustomerOrder[] }>("/customer-orders"),
         enabled: allowed,
     });
 
@@ -311,11 +492,9 @@ export default function CustomerOrders() {
                                         <span className="font-mono text-sm text-gray-900">
                                             {order.id}
                                         </span>
-                                        {order.customer_name && (
-                                            <span className="text-sm text-gray-500">
-                                                {order.customer_name}
-                                            </span>
-                                        )}
+                                        <span className="text-sm text-gray-500">
+                                            {order.customerName}
+                                        </span>
                                     </span>
                                     <span className="flex items-center gap-3">
                                         <StatusBadge status={order.status} />
