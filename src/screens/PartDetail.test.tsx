@@ -1,8 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { RouterProvider, createMemoryRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+    jsonOk,
+    jsonError,
+    mockFetchByUrl,
+    renderWithProviders,
+} from "../test/utils";
 import PartDetail from "./PartDetail";
 
 // --- Fixtures ------------------------------------------------------------
@@ -56,26 +60,13 @@ const CONTEXT = {
     generatedAt: "2024-04-01T00:00:00Z",
 };
 
-type ResponseStub = {
-    ok: boolean;
-    status: number;
-    statusText: string;
-    json: () => Promise<unknown>;
-};
+// --- Fetch routing -------------------------------------------------------
 
-function ok(body: unknown): ResponseStub {
-    return { ok: true, status: 200, statusText: "OK", json: async () => body };
-}
-
+type Stub = ReturnType<typeof jsonOk>;
 // Sentinel marking a route whose fetch should never resolve (keeps that
 // query pending). Routed below into a non-settling promise.
 const PENDING = Symbol("pending");
-
-function err(status: number, statusText: string, body: unknown): ResponseStub {
-    return { ok: false, status, statusText, json: async () => body };
-}
-
-type Route = ResponseStub | typeof PENDING;
+type Route = Stub | typeof PENDING;
 
 type RouteOverrides = {
     part?: Route;
@@ -84,64 +75,56 @@ type RouteOverrides = {
     status?: Route;
 };
 
+const isPost = (init?: RequestInit) => (init?.method ?? "GET") === "POST";
+
 /**
- * Installs a fetch stub that routes by URL across the four endpoints this
- * screen touches. Returns the underlying mock for call assertions.
+ * Installs a URL-routed fetch stub across the four endpoints this screen
+ * touches, via the shared `mockFetchByUrl` helper. Returns the mock for call
+ * assertions. A `PENDING` route never settles, keeping its query pending.
  */
 function installFetchRouter(overrides: RouteOverrides = {}) {
-    const resolve = (route: Route): Promise<ResponseStub> =>
-        route === PENDING
-            ? new Promise<ResponseStub>(() => {})
-            : Promise.resolve(route);
+    const respond = (route: Route | undefined, fallback: Stub) => {
+        const chosen = route ?? fallback;
+        return chosen === PENDING ? new Promise<Stub>(() => {}) : chosen;
+    };
 
-    const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
-        const url = String(input);
-        const method = init?.method ?? "GET";
-
-        if (method === "POST" && url.endsWith("/status")) {
-            return resolve(overrides.status ?? ok(PART));
-        }
-        if (url.endsWith("/bom")) {
-            return resolve(overrides.bom ?? ok(BOM));
-        }
-        if (url.endsWith("/context")) {
-            return resolve(overrides.context ?? ok(CONTEXT));
-        }
+    return mockFetchByUrl([
+        {
+            match: (url, init) => isPost(init) && url.endsWith("/status"),
+            respond: () => respond(overrides.status, jsonOk(PART)),
+        },
+        {
+            match: (url) => url.endsWith("/bom"),
+            respond: () => respond(overrides.bom, jsonOk(BOM)),
+        },
+        {
+            match: (url) => url.endsWith("/context"),
+            respond: () => respond(overrides.context, jsonOk(CONTEXT)),
+        },
         // GET /parts/:partNumber
-        return resolve(overrides.part ?? ok(PART));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    return fetchMock;
+        { match: () => true, respond: () => respond(overrides.part, jsonOk(PART)) },
+    ]);
 }
 
 function renderScreen() {
-    const queryClient = new QueryClient({
-        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    return renderWithProviders(<PartDetail />, {
+        route: { path: "/parts/:partNumber", initialEntry: "/parts/THE-HOMER-001" },
     });
-    const router = createMemoryRouter(
-        [{ path: "/parts/:partNumber", element: <PartDetail /> }],
-        { initialEntries: ["/parts/THE-HOMER-001"] },
-    );
-    return render(
-        <QueryClientProvider client={queryClient}>
-            <RouterProvider router={router} />
-        </QueryClientProvider>,
-    );
 }
 
 beforeEach(() => {
     installFetchRouter();
 });
 
-afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-});
-
 describe("PartDetail", () => {
     it("shows a loading state before the part resolves", () => {
-        // Never-resolving fetch keeps the part query pending.
-        vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+        // Every route stays pending, so the part query never resolves.
+        installFetchRouter({
+            part: PENDING,
+            bom: PENDING,
+            context: PENDING,
+            status: PENDING,
+        });
 
         renderScreen();
 
@@ -150,7 +133,10 @@ describe("PartDetail", () => {
 
     it("surfaces an error when the part query fails", async () => {
         installFetchRouter({
-            part: err(404, "Not Found", { error: "No such part", code: "NOT_FOUND" }),
+            part: jsonError(404, "Not Found", {
+                error: "No such part",
+                code: "NOT_FOUND",
+            }),
         });
 
         renderScreen();
@@ -164,7 +150,7 @@ describe("PartDetail", () => {
         const heading = await screen.findByRole("heading", { level: 1 });
         expect(heading).toHaveTextContent("THE-HOMER-001 — The Homer");
         expect(screen.getByText(/Revision C/)).toBeInTheDocument();
-        // Status appears in the header line.
+        // Status appears in the header line as a StatusBadge pill (a <span>).
         expect(
             screen.getByText("DRAFT", { selector: "span" }),
         ).toBeInTheDocument();
@@ -207,8 +193,8 @@ describe("PartDetail", () => {
 
     it("renders an empty BOM and empty instances message", async () => {
         installFetchRouter({
-            bom: ok({ data: [] }),
-            context: ok({ ...CONTEXT, inventory: { total: 0, byStatus: {} } }),
+            bom: jsonOk({ data: [] }),
+            context: jsonOk({ ...CONTEXT, inventory: { total: 0, byStatus: {} } }),
         });
 
         renderScreen();
@@ -219,7 +205,7 @@ describe("PartDetail", () => {
     });
 
     it("falls back to an em-dash when the revision is null", async () => {
-        installFetchRouter({ part: ok({ ...PART, revision: null }) });
+        installFetchRouter({ part: jsonOk({ ...PART, revision: null }) });
 
         renderScreen();
 
@@ -242,8 +228,8 @@ describe("PartDetail", () => {
 
     it("surfaces errors in the BOM and instances sections", async () => {
         installFetchRouter({
-            bom: err(500, "Server Error", { error: "bom boom" }),
-            context: err(500, "Server Error", { error: "context boom" }),
+            bom: jsonError(500, "Server Error", { error: "bom boom" }),
+            context: jsonError(500, "Server Error", { error: "context boom" }),
         });
 
         renderScreen();
@@ -265,7 +251,7 @@ describe("PartDetail", () => {
     });
 
     it("disables the invalid target when the part is RELEASED", async () => {
-        installFetchRouter({ part: ok({ ...PART, status: "RELEASED" }) });
+        installFetchRouter({ part: jsonOk({ ...PART, status: "RELEASED" }) });
 
         renderScreen();
 
@@ -278,7 +264,7 @@ describe("PartDetail", () => {
     it("fires a valid status transition POST", async () => {
         const user = userEvent.setup();
         const fetchMock = installFetchRouter({
-            status: ok({ ...PART, status: "RELEASED" }),
+            status: jsonOk({ ...PART, status: "RELEASED" }),
         });
 
         renderScreen();
@@ -302,7 +288,7 @@ describe("PartDetail", () => {
     it("surfaces a 422 INVALID_TRANSITION error from the transition", async () => {
         const user = userEvent.setup();
         installFetchRouter({
-            status: err(422, "Unprocessable Entity", {
+            status: jsonError(422, "Unprocessable Entity", {
                 error: "Cannot release a draft yet",
                 code: "INVALID_TRANSITION",
             }),
@@ -323,7 +309,7 @@ describe("PartDetail", () => {
     it("shows a non-INVALID_TRANSITION error message verbatim", async () => {
         const user = userEvent.setup();
         installFetchRouter({
-            status: err(403, "Forbidden", {
+            status: jsonError(403, "Forbidden", {
                 error: "You may not change this part",
                 code: "FORBIDDEN",
             }),
@@ -342,17 +328,19 @@ describe("PartDetail", () => {
 
     it("wraps a non-ApiError transition failure", async () => {
         const user = userEvent.setup();
-        const fetchMock = installFetchRouter();
-        // Make only the POST /status call reject with a plain network error.
-        fetchMock.mockImplementation((input: unknown, init?: RequestInit) => {
-            const url = String(input);
-            if ((init?.method ?? "GET") === "POST" && url.endsWith("/status")) {
-                return Promise.reject(new Error("network down"));
-            }
-            if (url.endsWith("/bom")) return Promise.resolve(ok(BOM));
-            if (url.endsWith("/context")) return Promise.resolve(ok(CONTEXT));
-            return Promise.resolve(ok(PART));
-        });
+        // Route POST /status to a plain network rejection; others resolve.
+        mockFetchByUrl([
+            {
+                match: (url, init) => isPost(init) && url.endsWith("/status"),
+                respond: () => Promise.reject(new Error("network down")),
+            },
+            { match: (url) => url.endsWith("/bom"), respond: () => jsonOk(BOM) },
+            {
+                match: (url) => url.endsWith("/context"),
+                respond: () => jsonOk(CONTEXT),
+            },
+            { match: () => true, respond: () => jsonOk(PART) },
+        ]);
 
         renderScreen();
 
@@ -402,7 +390,7 @@ describe("PartDetail", () => {
     it("shows an error inside the /context modal when context fails", async () => {
         const user = userEvent.setup();
         installFetchRouter({
-            context: err(500, "Server Error", { error: "context exploded" }),
+            context: jsonError(500, "Server Error", { error: "context exploded" }),
         });
 
         renderScreen();

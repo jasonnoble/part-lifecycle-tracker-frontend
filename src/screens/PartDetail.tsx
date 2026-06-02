@@ -2,36 +2,18 @@ import { useState } from "react";
 import { useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "../apiClient";
+import { StatusBadge, type Tone } from "../components/Badge";
+import type { BomItem, Part, PartStatus } from "../api/types";
 
 // --- Types (camelCase, matching the real backend) ------------------------
+// Part / BomItem / PartStatus are shared via ../api/types. The /bom endpoint
+// returns { data } with no meta, so it is fetched as api<{ data: BomItem[] }>.
 
-type PartStatus = "DRAFT" | "RELEASED" | "OBSOLETE";
-
-// GET /parts/:partNumber — header info only.
-type Part = {
-    id: string;
-    partNumber: string;
-    name: string;
-    description: string | null;
-    revision: string | null;
-    status: PartStatus;
-    createdAt: string;
-    updatedAt: string;
-};
-
-// GET /parts/:partNumber/bom — { data: BomItem[] } (no meta).
-type BomDependency = {
-    prerequisiteBomItemId: string;
-    prerequisitePartNumber: string;
-};
-
-type BomItem = {
-    id: string;
-    quantity: number;
-    childPartNumber: string;
-    childPartName: string;
-    deletedAt: string | null;
-    dependencies: BomDependency[];
+// Map part status to a Badge tone for the header pill.
+const STATUS_TONES: Record<PartStatus, Tone> = {
+    DRAFT: "warning",
+    RELEASED: "success",
+    OBSOLETE: "neutral",
 };
 
 // GET /parts/:partNumber/context — rich payload; only the bits we read are typed.
@@ -193,7 +175,7 @@ export default function PartDetail() {
                 </h1>
                 <p className="text-gray-600">
                     Revision {part.revision ?? "—"} ·{" "}
-                    <span className="font-medium">{part.status}</span>
+                    <StatusBadge value={part.status} tones={STATUS_TONES} />
                 </p>
                 {part.description && (
                     <p className="mt-1 text-gray-600">{part.description}</p>
