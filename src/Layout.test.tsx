@@ -1,13 +1,31 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RouterProvider, createMemoryRouter } from "react-router";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import Layout from "./Layout";
-import { setRole } from "./roles";
+import type { AuthUser } from "./auth/session";
+import { demoUser } from "./test/utils";
+
+// Layout derives the shell from the authenticated identity. Stub useAuth so the
+// tests don't need the Stytch provider; `state.user` is set per-test to drive
+// role gating, and `state.logout` is asserted on the Log out button.
+const state = vi.hoisted(() => ({
+  user: null as AuthUser | null,
+  logout: vi.fn(),
+}));
+
+vi.mock("./auth/AuthProvider", () => ({
+  useAuth: () => ({
+    user: state.user,
+    logout: state.logout,
+    loginAsDemo: vi.fn(),
+    applyStytchUser: vi.fn(),
+  }),
+}));
 
 afterEach(() => {
-  // Reset the actor-role cookie between tests.
-  document.cookie = "actor_role=; path=/; max-age=0";
+  state.user = null;
+  state.logout.mockClear();
 });
 
 function renderLayout() {
@@ -26,6 +44,7 @@ function renderLayout() {
 
 describe("Layout", () => {
   it("renders the nav tabs and the matched outlet content", () => {
+    state.user = demoUser("installer");
     renderLayout();
 
     expect(screen.getByRole("link", { name: "Assembly Line" })).toBeInTheDocument();
@@ -33,14 +52,35 @@ describe("Layout", () => {
     expect(screen.getByText("Home content")).toBeInTheDocument();
   });
 
-  it("renders the role selector with all six roles", () => {
+  it("shows a read-only 'Acting as' identity badge (no role picker)", () => {
+    state.user = demoUser("qa_engineer", { name: "Dr. Quinn" });
     renderLayout();
 
-    expect(screen.getByRole("combobox")).toBeInTheDocument();
-    expect(screen.getAllByRole("option")).toHaveLength(6);
+    // No dropdown anymore — identity is derived from the authenticated user.
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.getByText("Dr. Quinn")).toBeInTheDocument();
+    expect(screen.getByText("(QA Engineer)")).toBeInTheDocument();
   });
 
-  it("shows the Sales tab as disabled (not a link) with a described-by tooltip for a disallowed role (TECH_1)", () => {
+  it("logs out when the Log out button is clicked", async () => {
+    state.user = demoUser("installer");
+    const user = userEvent.setup();
+    renderLayout();
+
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+    expect(state.logout).toHaveBeenCalledOnce();
+  });
+
+  it("labels a read-only session in the identity badge", () => {
+    state.user = demoUser(null);
+    renderLayout();
+
+    expect(screen.getByText("Guest")).toBeInTheDocument();
+    expect(screen.getByText("(Read-only)")).toBeInTheDocument();
+  });
+
+  it("shows the Sales tab as disabled (not a link) with a described-by tooltip for a disallowed role (installer)", () => {
+    state.user = demoUser("installer");
     renderLayout();
 
     // Not navigable…
@@ -64,6 +104,7 @@ describe("Layout", () => {
   });
 
   it("reveals the restricted-Sales tooltip on keyboard focus and hides it on Escape", () => {
+    state.user = demoUser("installer");
     renderLayout();
 
     const sales = screen.getByText("Sales");
@@ -82,23 +123,8 @@ describe("Layout", () => {
   });
 
   it("shows the Sales tab as a real link for a sales-permitted role", () => {
-    setRole("SALESPERSON");
+    state.user = demoUser("salesperson", { name: "Sarah Chen" });
     renderLayout();
-
-    expect(screen.getByRole("link", { name: "Sales" })).toBeInTheDocument();
-  });
-
-  it("enables the Sales tab when the role is switched to a permitted one", async () => {
-    const user = userEvent.setup();
-    renderLayout();
-
-    expect(
-      screen.queryByRole("link", { name: "Sales" }),
-    ).not.toBeInTheDocument();
-
-    // Switching role in the selector should re-render the shell and turn the
-    // disabled Sales tab into a real link without a navigation.
-    await user.selectOptions(screen.getByRole("combobox"), "SITE_MANAGER");
 
     expect(screen.getByRole("link", { name: "Sales" })).toBeInTheDocument();
   });

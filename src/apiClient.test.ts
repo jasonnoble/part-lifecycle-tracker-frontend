@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, api, apiList } from "./apiClient";
-import { jsonError, jsonOk, mockFetch } from "./test/utils";
+import { setAuthUser } from "./auth/session";
+import { demoUser, jsonError, jsonOk, mockFetch } from "./test/utils";
 
 describe("api", () => {
-  it("sends Content-Type and X-Actor-Role headers and returns parsed JSON", async () => {
+  it("sends Content-Type (and nothing actor-ish) when logged out, returning parsed JSON", async () => {
     const fetchMock = mockFetch({ data: [{ id: "1" }] });
 
     const result = await api<{ data: { id: string }[] }>("/parts");
@@ -15,20 +16,37 @@ describe("api", () => {
     // BASE comes from VITE_API_BASE_URL (may be "" or "/api" depending on env).
     expect(String(url)).toMatch(/\/parts$/);
     expect(headers["Content-Type"]).toBe("application/json");
-    // No actor_role cookie in the test env → apiClient falls back to TECH_1.
-    expect(headers["X-Actor-Role"]).toBe("TECH_1");
+    // X-Actor-Role is gone (JAS-79) and there's no session → no Authorization.
+    expect(headers["X-Actor-Role"]).toBeUndefined();
+    expect(headers.Authorization).toBeUndefined();
   });
 
-  it("merges caller-provided method and headers", async () => {
+  it("sends the session JWT as a Bearer token when logged in", async () => {
+    setAuthUser(demoUser("installer", { sessionJwt: "jwt-abc" }));
     const fetchMock = mockFetch({});
 
-    await api("/parts", { method: "POST", headers: { "X-Custom": "1" } });
+    await api("/parts");
+
+    const [, options] = fetchMock.mock.calls[0];
+    const headers = (options?.headers ?? {}) as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer jwt-abc");
+  });
+
+  it("merges caller-provided method and headers (caller wins on conflicts)", async () => {
+    setAuthUser(demoUser("installer", { sessionJwt: "jwt-abc" }));
+    const fetchMock = mockFetch({});
+
+    await api("/parts", {
+      method: "POST",
+      headers: { "X-Custom": "1", Authorization: "Bearer fresh" },
+    });
 
     const [, options] = fetchMock.mock.calls[0];
     const headers = (options?.headers ?? {}) as Record<string, string>;
     expect(options?.method).toBe("POST");
     expect(headers["X-Custom"]).toBe("1");
-    expect(headers["X-Actor-Role"]).toBe("TECH_1");
+    // e.g. /me during login passes the just-minted JWT explicitly.
+    expect(headers.Authorization).toBe("Bearer fresh");
   });
 
   it("throws an ApiError carrying the backend message, code, and status", async () => {

@@ -7,5 +7,6 @@ import { afterEach, vi } from "vitest";
 // stubbed globals (e.g. fetch) and clear the actor-role cookie between tests.
 afterEach(() => {
   vi.unstubAllGlobals();
-  document.cookie = "actor_role=; path=/; max-age=0";
+  // Clear the auth-session cookie so a login in one test doesn't leak into the next.
+  document.cookie = "pl_session=; path=/; max-age=0";
 });

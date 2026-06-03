@@ -88,11 +88,38 @@ export function mockFetchByUrl(routes: UrlRoute[]) {
   return fetchMock;
 }
 
-/** Set the actor-role cookie the apiClient reads (cleared globally after each test). */
-export function setRole(role: string) {
-  document.cookie = `actor_role=${role}; path=/`;
+// ---------------------------------------------------------------------------
+// Auth fixtures
+// ---------------------------------------------------------------------------
+import type { AuthUser } from "../auth/session";
+
+// Mirrors the backend Permissions matrix (JAS-79): every seeded role can
+// install/validate/record; only qa_engineer can certify; read-only sessions
+// (null role) hold no abilities.
+function permissionsFor(role: string | null): string[] {
+  if (role === null) return [];
+  const base = [
+    "step.install",
+    "step.validate",
+    "instance.record_event",
+    "instance.record_test",
+  ];
+  return role === "qa_engineer" ? [...base, "step.certify"] : base;
 }
 
-export function clearRole() {
-  document.cookie = "actor_role=; path=/; max-age=0";
+/** An AuthUser as GET /me would resolve it. `demoUser(null)` = a read-only
+ *  session (authenticated, unseeded). Use with a per-file useAuth mock. */
+export function demoUser(
+  role: string | null,
+  overrides: Partial<AuthUser> = {},
+): AuthUser {
+  return {
+    email: role === null ? null : "test.user@example.com",
+    name: role === null ? null : "Test User",
+    role,
+    permissions: permissionsFor(role),
+    via: "demo",
+    sessionJwt: "test-jwt",
+    ...overrides,
+  };
 }

@@ -1,4 +1,4 @@
-import { getRole } from "./roles";
+import { sessionJwt } from "./auth/session";
 import type { Paginated } from "./api/types";
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -17,11 +17,16 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Every request authenticates with the Stytch session JWT (JAS-78/79); the
+  // backend derives identity, role, and actor from it. X-Actor-Role is gone —
+  // CORS no longer even admits the header. Callers may override Authorization
+  // via init.headers (e.g. fetching /me right after minting a session).
+  const jwt = sessionJwt();
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      "X-Actor-Role": getRole(),
+      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
       ...init.headers,
     },
   });

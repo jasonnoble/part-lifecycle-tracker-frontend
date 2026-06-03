@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { api, ApiError } from "../apiClient";
-import { actorEmailForRole, getRole, type RoleKey } from "../roles";
+import { useAuth } from "../auth/AuthProvider";
 import type { BomItem } from "../api/types";
 import { StatusBadge } from "../components/Badge";
 import { useDocumentTitle } from "../useDocumentTitle";
@@ -89,8 +89,11 @@ function actionForStatus(status: WorkOrderStep["status"]): Action | null {
 export default function WorkOrderDetail() {
   const queryClient = useQueryClient();
   const { id } = useParams<{ id: string }>();
-  const currentRole = getRole();
-  const actorEmail = actorEmailForRole(currentRole);
+  // The actor is the authenticated user (JAS-79) — the backend records
+  // identity from the session; nothing actor-ish is sent in request bodies.
+  const { user } = useAuth();
+  const userEmail = user?.email ?? null;
+  const permissions = user?.permissions ?? [];
 
   // Fetch this specific work order by id. The detail endpoint returns the bare
   // work-order object (not the pagy list envelope).
@@ -187,7 +190,8 @@ export default function WorkOrderDetail() {
     steps.length > 0 && steps.every((s) => s.status === "CERTIFIED");
 
   function runAction(step: WorkOrderStep, action: Action) {
-    const body: Record<string, unknown> = { actor: actorEmail };
+    // The backend derives the actor from the authenticated session (JAS-79).
+    const body: Record<string, unknown> = {};
     if (action === "install") {
       const installedSerial = (serials[step.id] ?? "").trim();
       if (!installedSerial) {
@@ -218,7 +222,7 @@ export default function WorkOrderDetail() {
           </p>
         </div>
         <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-600">
-          Acting as {actorEmail}
+          Acting as {userEmail ?? "read-only session"}
         </span>
       </div>
 
@@ -239,8 +243,8 @@ export default function WorkOrderDetail() {
               key={step.id}
               step={step}
               blocked={deriveBlocked(step, steps, bomItems)}
-              currentRole={currentRole}
-              actorEmail={actorEmail}
+              userEmail={userEmail}
+              permissions={permissions}
               serial={serials[step.id] ?? ""}
               onSerialChange={(v) =>
                 setSerials((prev) => ({ ...prev, [step.id]: v }))
@@ -286,8 +290,8 @@ export default function WorkOrderDetail() {
 function StepRow({
   step,
   blocked,
-  currentRole,
-  actorEmail,
+  userEmail,
+  permissions,
   serial,
   onSerialChange,
   error,
@@ -296,8 +300,8 @@ function StepRow({
 }: {
   step: WorkOrderStep;
   blocked: Blocked | null;
-  currentRole: RoleKey;
-  actorEmail: string;
+  userEmail: string | null;
+  permissions: string[];
   serial: string;
   onSerialChange: (value: string) => void;
   error?: string;
@@ -307,19 +311,24 @@ function StepRow({
   const action = actionForStatus(step.status);
   const isBlocked = !!blocked;
 
-  // 4-eyes: the installer of a step cannot also validate it. The server
-  // enforces this too; we mirror it in the UI by disabling Validate.
+  // 4-eyes: the installer of a step cannot also validate it — an identity rule
+  // on the authenticated user. The server enforces this too (409 SAME_ACTOR);
+  // we mirror it in the UI by disabling Validate.
   const fourEyesViolation =
-    action === "validate" && step.installedActor === actorEmail;
+    action === "validate" &&
+    userEmail !== null &&
+    step.installedActor === userEmail;
 
-  // Certify is QA-only.
-  const certifyNotQa = action === "certify" && currentRole !== "QA";
+  // Server-computed abilities from /me: certify is qa_engineer-only, and
+  // read-only sessions (no seeded identity) hold no abilities at all.
+  const notPermitted =
+    action != null && !permissions.includes(`step.${action}`);
 
   const canAct =
     action != null &&
     !isBlocked &&
     !fourEyesViolation &&
-    !certifyNotQa &&
+    !notPermitted &&
     !pending;
 
   // Display status: show derived BLOCKED for a blocked pending step.
@@ -330,7 +339,11 @@ function StepRow({
     actionTitle = `Blocked by ${blocked.blockingPartName} (must be CERTIFIED first)`;
   else if (fourEyesViolation)
     actionTitle = "4-eyes: you installed this step and cannot validate it";
-  else if (certifyNotQa) actionTitle = "Certify requires the QA role";
+  else if (notPermitted)
+    actionTitle =
+      action === "certify"
+        ? "Certify requires the QA Engineer role"
+        : "Your session is read-only";
 
   return (
     <li className="rounded-lg border border-gray-200 p-3">

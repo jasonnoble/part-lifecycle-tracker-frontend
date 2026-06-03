@@ -1,14 +1,25 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkOrderDetail from "./WorkOrderDetail";
+import type { AuthUser } from "../auth/session";
 import {
+  demoUser,
   jsonError,
   jsonOk,
   mockFetchByUrl,
   renderWithProviders,
-  setRole,
 } from "../test/utils";
+
+// The screen derives the acting identity + abilities from useAuth (JAS-79).
+const auth = vi.hoisted(() => ({ user: null as AuthUser | null }));
+vi.mock("../auth/AuthProvider", () => ({
+  useAuth: () => ({ user: auth.user }),
+}));
+
+const JAMIE = { email: "jamie@factory.com", name: "Jamie Torres" };
+const RILEY = { email: "riley@factory.com", name: "Riley Park" };
+const QUINN = { email: "quinn@factory.com", name: "Dr. Quinn" };
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -82,7 +93,7 @@ function renderScreen() {
 }
 
 beforeEach(() => {
-  setRole("TECH_1");
+  auth.user = demoUser("installer", JAMIE);
 });
 
 // ---------------------------------------------------------------------------
@@ -104,7 +115,7 @@ describe("WorkOrderDetail", () => {
     expect(screen.getByText("Widget")).toBeInTheDocument();
     // PENDING status pill.
     expect(screen.getByText("PENDING")).toBeInTheDocument();
-    // Acting-as banner reflects TECH_1 -> jamie.
+    // Acting-as banner reflects the authenticated identity.
     expect(screen.getByText("Acting as jamie@factory.com")).toBeInTheDocument();
     // Back link to the Assembly Line list.
     expect(
@@ -142,10 +153,10 @@ describe("WorkOrderDetail", () => {
     ).toBeDisabled();
   });
 
-  it("enables Install for a PENDING step as TECH_1 and fires the action, then refetches", async () => {
+  it("enables Install for a PENDING step and fires the action, then refetches", async () => {
     const user = userEvent.setup();
     let workOrderCallCount = 0;
-    mockFetchByUrl([
+    const fetchMock = mockFetchByUrl([
       {
         match: (url) => /\/work-orders\/wo-1$/.test(url),
         respond: () => {
@@ -177,10 +188,19 @@ describe("WorkOrderDetail", () => {
     await user.click(installBtn);
 
     await waitFor(() => expect(workOrderCallCount).toBeGreaterThan(1));
+
+    // The actor is derived server-side from the session (JAS-79) — the body
+    // carries only the serial.
+    const installCall = fetchMock.mock.calls.find(([url]) =>
+      /\/install$/.test(String(url)),
+    );
+    expect(JSON.parse(String(installCall?.[1]?.body))).toEqual({
+      installedSerial: "SN-XYZ",
+    });
   });
 
   it("disables Validate for the actor who installed the step (4-eyes)", async () => {
-    // TECH_1 == jamie installed this INSTALLED step → cannot validate.
+    // The authenticated user (jamie) installed this step → cannot validate.
     mockFetchByUrl([
       workOrderRoute(
         makeWorkOrder([
@@ -205,8 +225,8 @@ describe("WorkOrderDetail", () => {
     );
   });
 
-  it("enables Validate as TECH_2 when a different actor installed the step", async () => {
-    setRole("TECH_2");
+  it("enables Validate when a different actor installed the step", async () => {
+    auth.user = demoUser("installer", RILEY);
     mockFetchByUrl([
       workOrderRoute(
         makeWorkOrder([
@@ -232,8 +252,8 @@ describe("WorkOrderDetail", () => {
     expect(validateBtn).toBeEnabled();
   });
 
-  it("disables Certify for non-QA roles and enables it for QA", async () => {
-    // First render as TECH_1 (non-QA) → Certify disabled.
+  it("disables Certify without the step.certify ability and enables it for qa_engineer", async () => {
+    // First render as an installer (no step.certify ability) → disabled.
     mockFetchByUrl([
       workOrderRoute(makeWorkOrder([makeStep({ status: "VALIDATED" })])),
       emptyBomRoute(),
@@ -250,8 +270,8 @@ describe("WorkOrderDetail", () => {
     );
     unmount();
 
-    // Now as QA → Certify enabled.
-    setRole("QA");
+    // Now as QA Engineer → Certify enabled.
+    auth.user = demoUser("qa_engineer", QUINN);
     mockFetchByUrl([
       workOrderRoute(makeWorkOrder([makeStep({ status: "VALIDATED" })])),
       emptyBomRoute(),
