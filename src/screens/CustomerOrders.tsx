@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiList } from "../apiClient";
 import type { Part } from "../api/types";
 import { Badge, StatusBadge, type Tone } from "../components/Badge";
-import { canViewSales, getRole } from "../roles";
+import { canViewSales } from "../roles";
+import { useAuth } from "../auth/AuthProvider";
 import { useDocumentTitle } from "../useDocumentTitle";
 
 // ---------------------------------------------------------------------------
@@ -399,8 +400,10 @@ function NewOrderForm({ onClose }: { onClose: () => void }) {
 // ---------------------------------------------------------------------------
 export default function CustomerOrders() {
   useDocumentTitle("Sales");
-  const role = getRole();
-  const allowed = canViewSales(role);
+  // Assigned role from the authenticated identity (/me) — read-only sessions
+  // (null role) are excluded along with non-sales roles.
+  const { user } = useAuth();
+  const allowed = canViewSales(user?.role ?? null);
 
   const [showNewForm, setShowNewForm] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);

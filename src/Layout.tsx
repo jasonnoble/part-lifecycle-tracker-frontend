@@ -1,19 +1,7 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router";
-import RoleSelector from "./RoleSelector.tsx";
-import {
-  ROLES,
-  SALES_ROLES,
-  canViewSales,
-  getRole,
-  type RoleKey,
-} from "./roles.ts";
-
-// Human-readable list of the roles that may use Sales, e.g.
-// "Salesperson or Site Manager" — used in the disabled tab's tooltip.
-const SALES_ROLE_LABELS = SALES_ROLES.map(
-  (key) => ROLES.find((r) => r.key === key)?.label ?? key,
-).join(" or ");
+import { SALES_ROLE_LABELS, canViewSales, roleLabel } from "./roles.ts";
+import { useAuth } from "./auth/AuthProvider.tsx";
 
 // Small lock glyph shown on a restricted (disabled) nav tab.
 function LockIcon() {
@@ -87,10 +75,10 @@ function navLinkClass({ isActive }: { isActive: boolean }) {
 }
 
 export default function Layout() {
-  // Track the active role here so switching it re-renders the shell (and its
-  // outlet) — e.g. the Sales tab appears/disappears for the new role.
-  const [role, setRole] = useState<RoleKey>(getRole);
-  const showSales = canViewSales(role);
+  // Identity drives the shell now: the role is assigned (from the authenticated
+  // user), not self-selected. RequireAuth guarantees `user` is set here.
+  const { user, logout } = useAuth();
+  const showSales = user ? canViewSales(user.role) : false;
 
   return (
     <>
@@ -123,7 +111,27 @@ export default function Layout() {
             )}
           </nav>
         </div>
-        <RoleSelector onChange={setRole} />
+        {user && (
+          <div className="flex items-center gap-3">
+            {/* Read-only identity — derived from the authenticated user, no
+                longer a role picker. Unseeded identities have no name/role:
+                they browse read-only. */}
+            <span className="text-sm text-gray-600">
+              Acting as{" "}
+              <span className="font-medium text-gray-900">
+                {user.name ?? user.email ?? "Guest"}
+              </span>{" "}
+              <span className="text-gray-400">({roleLabel(user.role)})</span>
+            </span>
+            <button
+              type="button"
+              onClick={logout}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              Log out
+            </button>
+          </div>
+        )}
       </header>
       <main className="mx-auto max-w-5xl px-6 py-8">
         <Outlet />          {/* the matched child route renders here */}

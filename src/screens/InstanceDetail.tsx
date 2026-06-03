@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { api, apiList, ApiError } from "../apiClient";
 import { Badge, StatusBadge, type Tone } from "../components/Badge";
-import { actorEmailForRole, getRole } from "../roles";
+import { useAuth } from "../auth/AuthProvider";
 import { useDocumentTitle } from "../useDocumentTitle";
 
 type TestResult = "PASS" | "FAIL" | "INCONCLUSIVE";
@@ -106,8 +106,8 @@ function RecordEventForm({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [eventType, setEventType] = useState<string>(EVENT_TYPES[0]);
-  const [actor, setActor] = useState(() => actorEmailForRole(getRole()));
   const [occurredAt, setOccurredAt] = useState(() =>
     toDateTimeLocalValue(new Date()),
   );
@@ -117,9 +117,10 @@ function RecordEventForm({
     mutationFn: () =>
       api(`/instances/${serial}/events`, {
         method: "POST",
+        // The actor is recorded server-side from the authenticated identity
+        // (JAS-79) — it is no longer client-supplied.
         body: JSON.stringify({
           eventType,
-          actor: actor.trim(),
           notes: notes.trim() || null,
           occurredAt: new Date(occurredAt).toISOString(),
         }),
@@ -132,8 +133,7 @@ function RecordEventForm({
     },
   });
 
-  const canSubmit =
-    eventType !== "" && actor.trim() !== "" && occurredAt !== "";
+  const canSubmit = eventType !== "" && occurredAt !== "";
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -165,17 +165,6 @@ function RecordEventForm({
         </label>
 
         <label className="flex flex-col text-sm">
-          <span className="mb-1 font-medium text-gray-700">Actor</span>
-          <input
-            type="text"
-            value={actor}
-            onChange={(e) => setActor(e.target.value)}
-            className={`${FIELD_CLASS} min-w-56`}
-            required
-          />
-        </label>
-
-        <label className="flex flex-col text-sm">
           <span className="mb-1 font-medium text-gray-700">Occurred at</span>
           <input
             type="datetime-local"
@@ -186,6 +175,11 @@ function RecordEventForm({
           />
         </label>
       </div>
+
+      <p className="mt-2 text-xs text-gray-400">
+        Recorded as {user?.email ?? "your authenticated identity"} — the actor
+        comes from your session.
+      </p>
 
       <label className="mt-3 flex flex-col text-sm">
         <span className="mb-1 font-medium text-gray-700">
@@ -234,11 +228,9 @@ function AddTestRecordForm({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [testType, setTestType] = useState("");
   const [result, setResult] = useState<TestResult>("PASS");
-  const [conductedBy, setConductedBy] = useState(() =>
-    actorEmailForRole(getRole()),
-  );
   const [occurredAt, setOccurredAt] = useState(() =>
     toDateTimeLocalValue(new Date()),
   );
@@ -248,10 +240,11 @@ function AddTestRecordForm({
     mutationFn: () =>
       api(`/instances/${serial}/tests`, {
         method: "POST",
+        // conductedBy is recorded server-side from the authenticated identity
+        // (JAS-79) — it is no longer client-supplied.
         body: JSON.stringify({
           testType: testType.trim(),
           result,
-          conductedBy: conductedBy.trim(),
           notes: notes.trim() || null,
           occurredAt: new Date(occurredAt).toISOString(),
         }),
@@ -262,8 +255,7 @@ function AddTestRecordForm({
     },
   });
 
-  const canSubmit =
-    testType.trim() !== "" && conductedBy.trim() !== "" && occurredAt !== "";
+  const canSubmit = testType.trim() !== "" && occurredAt !== "";
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -307,17 +299,6 @@ function AddTestRecordForm({
         </label>
 
         <label className="flex flex-col text-sm">
-          <span className="mb-1 font-medium text-gray-700">Conducted by</span>
-          <input
-            type="text"
-            value={conductedBy}
-            onChange={(e) => setConductedBy(e.target.value)}
-            className={`${FIELD_CLASS} min-w-56`}
-            required
-          />
-        </label>
-
-        <label className="flex flex-col text-sm">
           <span className="mb-1 font-medium text-gray-700">Occurred at</span>
           <input
             type="datetime-local"
@@ -328,6 +309,11 @@ function AddTestRecordForm({
           />
         </label>
       </div>
+
+      <p className="mt-2 text-xs text-gray-400">
+        Conducted by {user?.email ?? "your authenticated identity"} — recorded
+        from your session.
+      </p>
 
       <label className="mt-3 flex flex-col text-sm">
         <span className="mb-1 font-medium text-gray-700">

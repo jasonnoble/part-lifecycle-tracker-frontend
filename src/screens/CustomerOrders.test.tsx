@@ -2,13 +2,24 @@ import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  demoUser,
   jsonOk,
   jsonError,
   mockFetchByUrl,
   renderWithProviders,
-  setRole,
 } from "../test/utils";
+import type { AuthUser } from "../auth/session";
 import CustomerOrders from "./CustomerOrders";
+
+// The screen derives the assigned role from useAuth (JAS-79).
+const auth = vi.hoisted(() => ({ user: null as AuthUser | null }));
+vi.mock("../auth/AuthProvider", () => ({
+  useAuth: () => ({ user: auth.user }),
+}));
+
+function setRole(role: string | null) {
+  auth.user = demoUser(role);
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -186,8 +197,8 @@ beforeEach(() => {
 // Role gating
 // ---------------------------------------------------------------------------
 describe("CustomerOrders role gating", () => {
-  it("renders content for SALESPERSON", async () => {
-    setRole("SALESPERSON");
+  it("renders content for salesperson", async () => {
+    setRole("salesperson");
     installFetch();
     renderScreen();
 
@@ -197,16 +208,16 @@ describe("CustomerOrders role gating", () => {
     expect(await screen.findByText("Springfield Taxi Co")).toBeInTheDocument();
   });
 
-  it("renders content for SITE_MANAGER", async () => {
-    setRole("SITE_MANAGER");
+  it("renders content for site_manager", async () => {
+    setRole("site_manager");
     installFetch();
     renderScreen();
 
     expect(await screen.findByText("Shelbyville Fleet")).toBeInTheDocument();
   });
 
-  it("shows the access notice for a disallowed role (TECH_1) and does not fetch", () => {
-    setRole("TECH_1");
+  it("shows the access notice for a disallowed role (installer) and does not fetch", () => {
+    setRole("installer");
     const fetchMock = installFetch();
     renderScreen();
 
@@ -226,7 +237,7 @@ describe("CustomerOrders role gating", () => {
 // ---------------------------------------------------------------------------
 describe("CustomerOrders list", () => {
   it("shows loading then renders orders with status badges", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     installFetch();
     renderScreen();
 
@@ -242,7 +253,7 @@ describe("CustomerOrders list", () => {
   });
 
   it("renders an empty-state when there are no orders", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     installFetch({ listOrders: () => jsonOk({ data: [] }) });
     renderScreen();
 
@@ -252,7 +263,7 @@ describe("CustomerOrders list", () => {
   });
 
   it("shows an error message when the list request fails", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     installFetch({
       listOrders: () =>
         jsonError(500, "Server Error", { error: "boom" }),
@@ -268,7 +279,7 @@ describe("CustomerOrders list", () => {
 // ---------------------------------------------------------------------------
 describe("CustomerOrders detail", () => {
   it("expands a selected order showing line items and derived fulfillment badges", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch();
     renderScreen();
@@ -289,7 +300,7 @@ describe("CustomerOrders detail", () => {
   });
 
   it("collapses an expanded order when clicked again", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch();
     renderScreen();
@@ -303,7 +314,7 @@ describe("CustomerOrders detail", () => {
   });
 
   it("shows 'unknown' fulfillment when the supplier-PO lookup fails", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch({
       listSupplierPos: () =>
@@ -317,7 +328,7 @@ describe("CustomerOrders detail", () => {
   });
 
   it("shows an error in the detail panel when the order fetch fails", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch({
       getOrder: () =>
@@ -330,7 +341,7 @@ describe("CustomerOrders detail", () => {
   });
 
   it("renders a no-line-items message for an order with no lines", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch({
       getOrder: () =>
@@ -355,7 +366,7 @@ describe("CustomerOrders detail", () => {
 // ---------------------------------------------------------------------------
 describe("CustomerOrders new-order form", () => {
   it("toggles the form open and closed", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch();
     renderScreen();
@@ -375,7 +386,7 @@ describe("CustomerOrders new-order form", () => {
   });
 
   it("disables submit until a customer name and at least one line are provided", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch();
     renderScreen();
@@ -404,7 +415,7 @@ describe("CustomerOrders new-order form", () => {
   });
 
   it("submits the expected payload and refreshes the list", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     const fetchMock = installFetch();
     renderScreen();
@@ -445,7 +456,7 @@ describe("CustomerOrders new-order form", () => {
   });
 
   it("supports adding and removing line items", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch();
     renderScreen();
@@ -469,7 +480,7 @@ describe("CustomerOrders new-order form", () => {
   });
 
   it("surfaces a 422 validation error from the backend", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch({
       createOrder: () =>
@@ -505,7 +516,7 @@ describe("CustomerOrders new-order form", () => {
   });
 
   it("shows a parts-load error inside the form", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch({
       listParts: () =>
@@ -524,7 +535,7 @@ describe("CustomerOrders new-order form", () => {
   });
 
   it("does not submit when the customer name is only whitespace", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     const fetchMock = installFetch();
     renderScreen();
@@ -554,7 +565,7 @@ describe("CustomerOrders new-order form", () => {
 
 describe("CustomerOrders fulfillment derivation edge cases", () => {
   it("marks a line as In stock when its supplier PO line is RECEIVED", async () => {
-    setRole("SALESPERSON");
+    setRole("salesperson");
     const user = userEvent.setup();
     installFetch({
       getOrder: () =>

@@ -1,13 +1,26 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import InstanceDetail from "./InstanceDetail";
+import type { AuthUser } from "../auth/session";
 import {
+  demoUser,
   jsonOk,
   jsonError,
   mockFetchByUrl,
   renderWithProviders,
 } from "../test/utils";
+
+// The record forms show (and the backend records) the authenticated identity
+// as the actor (JAS-79); stub useAuth accordingly.
+const auth = vi.hoisted(() => ({ user: null as AuthUser | null }));
+vi.mock("../auth/AuthProvider", () => ({
+  useAuth: () => ({ user: auth.user }),
+}));
+
+beforeEach(() => {
+  auth.user = demoUser("installer", { email: "jamie@factory.com", name: "Jamie Torres" });
+});
 
 type Override = {
   ok?: boolean;
@@ -332,7 +345,7 @@ describe("InstanceDetail — recording", () => {
     ]);
   }
 
-  it("records a lifecycle event: posts eventType, actor, notes, occurredAt", async () => {
+  it("records a lifecycle event: posts eventType, notes, occurredAt (actor is server-derived)", async () => {
     const user = userEvent.setup();
     const fetchMock = installWriteRouter();
     renderScreen();
@@ -345,11 +358,10 @@ describe("InstanceDetail — recording", () => {
       "INSPECTED",
     );
 
-    // The actor is prefilled from the active role (TECH_1 → jamie); override it.
-    const actorInput = within(form).getByLabelText("Actor");
-    expect(actorInput).toHaveValue("jamie@factory.com");
-    await user.clear(actorInput);
-    await user.type(actorInput, "quinn@factory.com");
+    // The actor comes from the session — the form only shows who it will be.
+    expect(
+      within(form).getByText(/Recorded as jamie@factory.com/),
+    ).toBeInTheDocument();
 
     // occurredAt is a datetime-local input → sent to the server as ISO.
     fireEvent.change(within(form).getByLabelText("Occurred at"), {
@@ -367,7 +379,8 @@ describe("InstanceDetail — recording", () => {
       expect(post).toBeDefined();
       const body = JSON.parse((post?.[1] as RequestInit).body as string);
       expect(body.eventType).toBe("INSPECTED");
-      expect(body.actor).toBe("quinn@factory.com");
+      // Actor is recorded server-side from the session, never client-supplied.
+      expect(body.actor).toBeUndefined();
       expect(body.notes).toBe("Looks good");
       // occurredAt is sent as an ISO timestamp.
       expect(body.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
@@ -381,7 +394,7 @@ describe("InstanceDetail — recording", () => {
     );
   });
 
-  it("records a test result: posts testType, result, conductedBy, notes", async () => {
+  it("records a test result: posts testType, result, notes (conductedBy is server-derived)", async () => {
     const user = userEvent.setup();
     const fetchMock = installWriteRouter();
     renderScreen();
@@ -394,10 +407,9 @@ describe("InstanceDetail — recording", () => {
     await user.type(within(form).getByLabelText("Test type"), "Pressure test");
     await user.selectOptions(within(form).getByLabelText("Result"), "FAIL");
 
-    const conductedByInput = within(form).getByLabelText("Conducted by");
-    expect(conductedByInput).toHaveValue("jamie@factory.com");
-    await user.clear(conductedByInput);
-    await user.type(conductedByInput, "qa@factory.com");
+    expect(
+      within(form).getByText(/Conducted by jamie@factory.com/),
+    ).toBeInTheDocument();
 
     fireEvent.change(within(form).getByLabelText("Occurred at"), {
       target: { value: "2024-05-01T08:30" },
@@ -417,7 +429,8 @@ describe("InstanceDetail — recording", () => {
       const body = JSON.parse((post?.[1] as RequestInit).body as string);
       expect(body.testType).toBe("Pressure test");
       expect(body.result).toBe("FAIL");
-      expect(body.conductedBy).toBe("qa@factory.com");
+      // conductedBy is recorded server-side from the session.
+      expect(body.conductedBy).toBeUndefined();
       expect(body.notes).toBe("n/a");
       expect(body.occurredAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
