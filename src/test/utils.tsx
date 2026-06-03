@@ -93,18 +93,20 @@ export function mockFetchByUrl(routes: UrlRoute[]) {
 // ---------------------------------------------------------------------------
 import type { AuthUser } from "../auth/session";
 
-// Mirrors the backend Permissions matrix (JAS-79): every seeded role can
-// install/validate/record; only qa_engineer can certify; read-only sessions
-// (null role) hold no abilities.
+// Mirrors the backend Permissions matrix (JAS-79): qa_engineer certifies and
+// records but doesn't install/validate; other seeded roles install/validate
+// and record; read-only sessions (null role) hold no abilities.
 function permissionsFor(role: string | null): string[] {
   if (role === null) return [];
-  const base = [
+  if (role === "qa_engineer") {
+    return ["step.certify", "instance.record_event", "instance.record_test"];
+  }
+  return [
     "step.install",
     "step.validate",
     "instance.record_event",
     "instance.record_test",
   ];
-  return role === "qa_engineer" ? [...base, "step.certify"] : base;
 }
 
 /** An AuthUser as GET /me would resolve it. `demoUser(null)` = a read-only

@@ -289,6 +289,38 @@ describe("WorkOrderDetail", () => {
     expect(certifyEnabled).toBeEnabled();
   });
 
+  it("disables Install for a seeded role lacking the ability, with a role-specific title", async () => {
+    // Live matrix: qa_engineer certifies but doesn't install.
+    auth.user = demoUser("qa_engineer", QUINN);
+    mockFetchByUrl([
+      workOrderRoute(makeWorkOrder([makeStep()])),
+      emptyBomRoute(),
+    ]);
+
+    renderScreen();
+
+    const installBtn = await screen.findByRole("button", { name: "Install" });
+    expect(installBtn).toBeDisabled();
+    expect(installBtn).toHaveAttribute(
+      "title",
+      "Your role doesn't permit this action",
+    );
+  });
+
+  it("disables all actions for a read-only session, with a read-only title", async () => {
+    auth.user = demoUser(null);
+    mockFetchByUrl([
+      workOrderRoute(makeWorkOrder([makeStep({ status: "INSTALLED" })])),
+      emptyBomRoute(),
+    ]);
+
+    renderScreen();
+
+    const validateBtn = await screen.findByRole("button", { name: "Validate" });
+    expect(validateBtn).toBeDisabled();
+    expect(validateBtn).toHaveAttribute("title", "Your session is read-only");
+  });
+
   it("keeps Complete disabled until all steps are CERTIFIED", async () => {
     mockFetchByUrl([
       workOrderRoute(

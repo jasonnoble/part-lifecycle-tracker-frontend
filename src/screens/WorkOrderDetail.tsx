@@ -343,7 +343,9 @@ function StepRow({
     actionTitle =
       action === "certify"
         ? "Certify requires the QA Engineer role"
-        : "Your session is read-only";
+        : userEmail
+          ? "Your role doesn't permit this action"
+          : "Your session is read-only";
 
   return (
     <li className="rounded-lg border border-gray-200 p-3">

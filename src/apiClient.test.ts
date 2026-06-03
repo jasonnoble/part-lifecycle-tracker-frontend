@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiError, api, apiList } from "./apiClient";
-import { setAuthUser } from "./auth/session";
+import { getAuthUser, setAuthUser } from "./auth/session";
 import { demoUser, jsonError, jsonOk, mockFetch } from "./test/utils";
 
 describe("api", () => {
@@ -64,6 +64,41 @@ describe("api", () => {
     expect(err.message).toBe("Part number has already been taken");
     expect(err.code).toBe("VALIDATION_FAILED");
     expect(err.status).toBe(422);
+  });
+
+  it("drops the session and redirects to /login when a held session gets a 401", async () => {
+    setAuthUser(demoUser("installer", { sessionJwt: "jwt-expired" }));
+    mockFetch(() =>
+      Promise.resolve(
+        jsonError(401, "Unauthorized", {
+          error: "Authentication required",
+          code: "UNAUTHENTICATED",
+        }),
+      ),
+    );
+    // jsdom can't navigate; stub the redirect to observe it.
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+
+    const err = (await api("/work-orders").catch((e) => e)) as ApiError;
+
+    expect(err.status).toBe(401);
+    // The dead session is gone and the user is sent back to the login screen.
+    expect(getAuthUser()).toBeNull();
+    expect(assign).toHaveBeenCalledWith("/login");
+  });
+
+  it("does not redirect on 401 when no session is held (e.g. a failed login)", async () => {
+    mockFetch(() =>
+      Promise.resolve(jsonError(401, "Unauthorized", { error: "nope" })),
+    );
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+
+    const err = (await api("/me").catch((e) => e)) as ApiError;
+
+    expect(err.status).toBe(401);
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("falls back to the status line when the error body is not JSON", async () => {
