@@ -14,7 +14,13 @@ vi.mock("../auth/AuthProvider", () => ({ useAuth: () => authStub }));
 afterEach(() => {
   authStub.loginAsDemo.mockReset();
   stytchStub.magicLinks.email.loginOrCreate.mockReset();
+  vi.unstubAllEnvs();
 });
+
+// The magic-link form only renders with a real publishable token configured.
+function stubStytchToken() {
+  vi.stubEnv("VITE_STYTCH_PUBLIC_TOKEN", "public-token-test-abc123");
+}
 
 // loginAsDemo is async (POST /demo-sessions + GET /me); resolve by default.
 function stubDemoLoginResolved() {
@@ -60,7 +66,19 @@ describe("Login", () => {
     ).toBeEnabled();
   });
 
+  it("hides the magic-link form and explains, when no Stytch token is configured", () => {
+    render(<Login />);
+
+    expect(
+      screen.queryByLabelText("Email address"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Magic-link sign-in isn't configured/),
+    ).toBeInTheDocument();
+  });
+
   it("sends a magic link and confirms the email was sent", async () => {
+    stubStytchToken();
     stytchStub.magicLinks.email.loginOrCreate.mockResolvedValueOnce({});
     const user = userEvent.setup();
     render(<Login />);
@@ -82,6 +100,7 @@ describe("Login", () => {
   });
 
   it("surfaces an error when sending the magic link fails", async () => {
+    stubStytchToken();
     stytchStub.magicLinks.email.loginOrCreate.mockRejectedValueOnce(
       new Error("invalid magic_link_url"),
     );

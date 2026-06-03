@@ -13,6 +13,11 @@ export default function Login() {
   const stytch = useStytch();
   const { loginAsDemo } = useAuth();
 
+  // Without the real publishable token the magic-link send can only ever
+  // produce a Stytch 400 — show a hint instead of a dead form. (The demo
+  // logins don't need the token: the backend mints those sessions.)
+  const stytchConfigured = Boolean(import.meta.env.VITE_STYTCH_PUBLIC_TOKEN);
+
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<MagicStatus>("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -120,7 +125,13 @@ export default function Login() {
         <h2 id="magic-heading" className="sr-only">
           Email magic link
         </h2>
-        {status === "sent" ? (
+        {!stytchConfigured ? (
+          <p className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
+            Magic-link sign-in isn't configured in this environment (set{" "}
+            <code className="text-xs">VITE_STYTCH_PUBLIC_TOKEN</code>). The
+            demo logins above work without it.
+          </p>
+        ) : status === "sent" ? (
           <p
             role="status"
             className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
