@@ -1,6 +1,6 @@
 # Part Lifecycle Tracker — Frontend
 
-A static React + TypeScript SPA (Vite) for tracking parts, serialized part instances, assembly work orders, and customer/sales orders. It is built as static files and served by Cloudflare Pages; the browser calls the Rails API over HTTP.
+A static React + TypeScript SPA (Vite) for tracking parts, serialized part instances, assembly work orders, and customer/sales orders. It is built as static files and served by Cloudflare Workers (static assets); the browser calls the Rails API over HTTP.
 
 **Stack:** Vite · React 19 · React Router 7 · TanStack Query 5 · Tailwind CSS v4
 
@@ -24,8 +24,9 @@ cp .env.example .env.local
 | Var | Dev | Prod (set as a Workers Build variable) |
 |-----|-----|----------------------------------------|
 | `VITE_API_BASE_URL` | `/api` (goes through the Vite proxy) | the API origin, e.g. `https://partledger.jasonnoble.dev` |
+| `VITE_STYTCH_PUBLIC_TOKEN` | optional — the one-click demo logins work without it; needed only for magic-link sign-in | the Stytch publishable token (Stytch dashboard → API Keys) |
 
-> ⚠️ **`VITE_*` vars are baked into the JS bundle at build time and are publicly visible in DevTools.** Don't put anything genuinely sensitive behind a `VITE_` prefix. Authorization is handled by the `X-Actor-Role` header (see below), not an API key.
+> ⚠️ **`VITE_*` vars are baked into the JS bundle at build time and are publicly visible in DevTools.** Don't put anything genuinely sensitive behind a `VITE_` prefix. Neither var here is a secret: the Stytch token is publishable by design, and authorization is handled by Stytch session **Bearer JWTs** — the backend resolves identity from the JWT and assigns roles/`permissions[]` server-side (the demo personas mint real Stytch sessions), so the client never holds an API key or chooses a role.
 
 `.env.local` is gitignored.
 
@@ -80,6 +81,6 @@ npm run coverage:diff      # diff-cover vs origin/main, --fail-under=90
 Cloudflare Workers (static-assets) via Workers Builds, auto-deploying on push:
 
 - **Build command:** `npm run build`  ·  **Output dir:** `dist/` (see `wrangler.jsonc`).
-- **Build-time vars:** set `VITE_API_BASE_URL` (the API origin) under the Worker's *Build → Variables and secrets*. These are build-time only — Workers does not share runtime and build-time vars, and `VITE_*` must exist when `vite build` runs to be inlined.
+- **Build-time vars:** set `VITE_API_BASE_URL` (the API origin) and `VITE_STYTCH_PUBLIC_TOKEN` under the Worker's *Build → Variables and secrets*. These are build-time only — Workers does not share runtime and build-time vars, and `VITE_*` must exist when `vite build` runs to be inlined.
 - SPA deep-link fallback is handled by `not_found_handling: "single-page-application"` in `wrangler.jsonc` (no `_redirects` file — it conflicts with this flow).
-- The backend must allow the deployed origin via `rack-cors`, including the `X-Actor-Role` request header.
+- The backend must allow the deployed origin via `rack-cors`, including the `Authorization` request header (every API call carries a `Bearer` session JWT).
