@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useMatch, useNavigate, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api, apiList } from "../apiClient";
 import { StatusBadge, type Tone } from "../components/Badge";
@@ -84,6 +84,13 @@ function ContextModal({
     // GET /parts/:partNumber/context returns the full context payload.
     queryFn: () => api<PartContext>(`/parts/${partNumber}/context`),
   });
+  const [copied, setCopied] = useState(false);
+
+  async function copyPayload() {
+    await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
 
   return (
     <div
@@ -99,14 +106,24 @@ function ContextModal({
       >
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="text-lg font-semibold">Raw /context response</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100"
-            aria-label="Close"
-          >
-            ✕
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={copyPayload}
+              disabled={isPending || Boolean(error)}
+              className="rounded px-2 py-1 text-sm font-medium text-gray-500 hover:bg-gray-100 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-transparent"
+            >
+              {copied ? "Copied!" : "Copy"}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded px-2 py-1 text-gray-500 hover:bg-gray-100"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
         </div>
         <div className="overflow-auto p-4">
           {isPending && <p>Loading…</p>}
@@ -286,7 +303,11 @@ export default function PartDetail() {
   const { partNumber } = useParams<{ partNumber: string }>();
   useDocumentTitle(partNumber);
   const queryClient = useQueryClient();
-  const [showContext, setShowContext] = useState(false);
+  const navigate = useNavigate();
+  // The raw-context modal is URL-driven so /parts/:partNumber/context can be
+  // deep-linked; opening pushes the /context segment, closing strips it.
+  const showContext = useMatch("/parts/:partNumber/context") !== null;
+  const partPath = `/parts/${encodeURIComponent(partNumber ?? "")}`;
   const [showAddBom, setShowAddBom] = useState(false);
   // Inline error for a failed BOM-row delete, keyed by bom item id.
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({});
@@ -573,7 +594,7 @@ export default function PartDetail() {
       <section className="border-t border-gray-100 pt-4">
         <button
           type="button"
-          onClick={() => setShowContext(true)}
+          onClick={() => navigate(`${partPath}/context`)}
           className="text-sm font-medium text-gray-500 underline-offset-2 hover:text-gray-700 hover:underline"
         >
           View /context
@@ -583,7 +604,7 @@ export default function PartDetail() {
       {showContext && partNumber && (
         <ContextModal
           partNumber={partNumber}
-          onClose={() => setShowContext(false)}
+          onClose={() => navigate(partPath, { replace: true })}
         />
       )}
     </div>

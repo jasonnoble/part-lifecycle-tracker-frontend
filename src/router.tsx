@@ -36,7 +36,8 @@ export const router = createBrowserRouter([
           { index: true, Component: WorkOrdersList },         // Assembly Line = home tab
           { path: "work-orders/:id", Component: WorkOrderDetail },
           { path: "parts", Component: PartsList },
-          { path: "parts/:partNumber", Component: PartDetail },
+          // Optional /context segment deep-links the raw-context modal.
+          { path: "parts/:partNumber/context?", Component: PartDetail },
           { path: "instances/:serial", Component: InstanceDetail },
           { path: "sales", Component: CustomerOrders },
         ],

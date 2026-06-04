@@ -106,9 +106,11 @@ function installFetchRouter(overrides: RouteOverrides = {}) {
   ]);
 }
 
-function renderScreen() {
+function renderScreen(initialEntry = "/parts/THE-HOMER-001") {
   return renderWithProviders(<PartDetail />, {
-    route: { path: "/parts/:partNumber", initialEntry: "/parts/THE-HOMER-001" },
+    // Same optional /context segment as the real router, so the URL-driven
+    // modal can open (navigate) and deep-link within the memory router.
+    route: { path: "/parts/:partNumber/context?", initialEntry },
   });
 }
 
@@ -402,6 +404,38 @@ describe("PartDetail", () => {
     expect(
       await within(dialog).findByText("Error: context exploded"),
     ).toBeInTheDocument();
+  });
+
+  it("opens the /context modal from a /context deep link", async () => {
+    renderScreen("/parts/THE-HOMER-001/context");
+
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => {
+      expect(dialog.textContent).toContain("IN_STOCK");
+    });
+  });
+
+  it("copies the /context payload to the clipboard", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByRole("heading", { level: 1 });
+    await user.click(screen.getByRole("button", { name: "View /context" }));
+
+    const dialog = await screen.findByRole("dialog");
+    // Copy is disabled until the payload loads.
+    await waitFor(() => {
+      expect(dialog.textContent).toContain("IN_STOCK");
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Copy" }));
+
+    // Button gives feedback and the serialized payload lands on the clipboard.
+    expect(
+      await within(dialog).findByRole("button", { name: "Copied!" }),
+    ).toBeInTheDocument();
+    expect(await window.navigator.clipboard.readText()).toBe(
+      JSON.stringify(CONTEXT, null, 2),
+    );
   });
 
   it("closes the /context modal when the backdrop is clicked", async () => {
