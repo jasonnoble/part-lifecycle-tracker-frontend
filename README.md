@@ -4,6 +4,9 @@ A static React + TypeScript SPA (Vite) for tracking parts, serialized part insta
 
 **Stack:** Vite · React 19 · React Router 7 · TanStack Query 5 · Tailwind CSS v4
 
+**Live demo:** https://app.partledger.jasonnoble.dev — one-click demo logins, no signup.
+**Write-up:** [How I built Part Lifecycle Tracker](https://jasonnoble.dev/notebook/how-i-built-part-lifecycle-tracker)
+
 ## Prerequisites
 
 Toolchain is pinned in `mise.toml` (`node@26.2`, `npm@11.16.0`). With [mise](https://mise.jdx.dev) installed:
